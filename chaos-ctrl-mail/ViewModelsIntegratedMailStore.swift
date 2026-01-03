@@ -96,7 +96,7 @@ class IntegratedMailStore {
         }
         
         do {
-            let fetchedEmails = try await emailService.fetchEmails(folder: selectedFolder)
+            let fetchedEmails = try await emailService.fetchEmails(folder: selectedFolder, limit: 5)
             print("IntegratedMailStore: Fetched \(fetchedEmails.count) emails")
             emails = fetchedEmails
             lastError = nil
