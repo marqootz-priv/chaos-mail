@@ -6,8 +6,17 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		17B6FB862F07754900F00411 /* GoogleSignInManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17B6FB852F07754600F00411 /* GoogleSignInManager.swift */; };
+		17B6FB882F07756800F00411 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17B6FB872F07756600F00411 /* BackendService.swift */; };
+		17B6FB8A2F07758300F00411 /* SignInWithGoogleButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17B6FB892F07758200F00411 /* SignInWithGoogleButton.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		17B6FB3C2F071B2800F00411 /* chaos-ctrl-mail.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "chaos-ctrl-mail.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		17B6FB852F07754600F00411 /* GoogleSignInManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleSignInManager.swift; sourceTree = "<group>"; };
+		17B6FB872F07756600F00411 /* BackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendService.swift; sourceTree = "<group>"; };
+		17B6FB892F07758200F00411 /* SignInWithGoogleButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInWithGoogleButton.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -32,6 +41,9 @@
 		17B6FB332F071B2800F00411 = {
 			isa = PBXGroup;
 			children = (
+				17B6FB892F07758200F00411 /* SignInWithGoogleButton.swift */,
+				17B6FB872F07756600F00411 /* BackendService.swift */,
+				17B6FB852F07754600F00411 /* GoogleSignInManager.swift */,
 				17B6FB3E2F071B2800F00411 /* chaos-ctrl-mail */,
 				17B6FB3D2F071B2800F00411 /* Products */,
 			);
@@ -119,6 +131,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				17B6FB882F07756800F00411 /* BackendService.swift in Sources */,
+				17B6FB8A2F07758300F00411 /* SignInWithGoogleButton.swift in Sources */,
+				17B6FB862F07754900F00411 /* GoogleSignInManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -251,6 +266,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "chaos-ctrl-mail/chaos-ctrl-mail.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = LGWM76AN5G;
@@ -283,6 +299,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "chaos-ctrl-mail/chaos-ctrl-mail.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = LGWM76AN5G;

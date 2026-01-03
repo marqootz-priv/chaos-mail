@@ -1,0 +1,257 @@
+//
+//  GoogleSignInManager.swift
+//  chaos-ctrl-mail
+//
+
+import Foundation
+import AuthenticationServices
+import Observation
+import CommonCrypto
+
+@Observable
+class GoogleSignInManager: NSObject {
+    var isAuthenticating = false
+    var authError: Error?
+    var currentUser: GoogleUser?
+    
+    private let clientID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
+    private let redirectURI = "com.googleusercontent.apps.YOUR_CLIENT_ID:/oauth2redirect"
+    private let authorizationEndpoint = "https://accounts.google.com/o/oauth2/v2/auth"
+    private let tokenEndpoint = "https://oauth2.googleapis.com/token"
+    
+    struct GoogleUser {
+        let userId: String
+        let email: String
+        let fullName: String?
+        let givenName: String?
+        let familyName: String?
+        let profilePictureURL: URL?
+        let idToken: String
+        let accessToken: String
+        let refreshToken: String?
+        
+        var displayName: String {
+            fullName ?? givenName ?? email.components(separatedBy: "@").first ?? "Google User"
+        }
+    }
+    
+    func signIn() async throws -> GoogleUser {
+        isAuthenticating = true
+        authError = nil
+        defer { isAuthenticating = false }
+        
+        let codeVerifier = generateCodeVerifier()
+        let codeChallenge = generateCodeChallenge(from: codeVerifier)
+        
+        guard let authURL = buildAuthorizationURL(codeChallenge: codeChallenge) else {
+            throw GoogleSignInError.invalidAuthorizationURL
+        }
+        
+        let authorizationCode = try await presentWebAuthenticationSession(url: authURL)
+        let tokens = try await exchangeCodeForTokens(authorizationCode: authorizationCode, codeVerifier: codeVerifier)
+        let userInfo = try decodeIDToken(tokens.idToken)
+        
+        let user = GoogleUser(
+            userId: userInfo.sub,
+            email: userInfo.email,
+            fullName: userInfo.name,
+            givenName: userInfo.givenName,
+            familyName: userInfo.familyName,
+            profilePictureURL: userInfo.picture,
+            idToken: tokens.idToken,
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken
+        )
+        
+        currentUser = user
+        return user
+    }
+    
+    private func buildAuthorizationURL(codeChallenge: String) -> URL? {
+        var components = URLComponents(string: authorizationEndpoint)
+        components?.queryItems = [
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "redirect_uri", value: redirectURI),
+            URLQueryItem(name: "response_type", value: "code"),
+            URLQueryItem(name: "scope", value: "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send"),
+            URLQueryItem(name: "code_challenge", value: codeChallenge),
+            URLQueryItem(name: "code_challenge_method", value: "S256"),
+            URLQueryItem(name: "access_type", value: "offline"),
+            URLQueryItem(name: "prompt", value: "consent")
+        ]
+        return components?.url
+    }
+    
+    private func presentWebAuthenticationSession(url: URL) async throws -> String {
+        return try await withCheckedThrowingContinuation { continuation in
+            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "com.googleusercontent.apps") { callbackURL, error in
+                if let error = error {
+                    if (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
+                        continuation.resume(throwing: GoogleSignInError.userCanceled)
+                    } else {
+                        continuation.resume(throwing: error)
+                    }
+                    return
+                }
+                
+                guard let callbackURL = callbackURL,
+                      let code = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?
+                    .queryItems?
+                    .first(where: { $0.name == "code" })?
+                    .value else {
+                    continuation.resume(throwing: GoogleSignInError.missingAuthorizationCode)
+                    return
+                }
+                
+                continuation.resume(returning: code)
+            }
+            
+            session.prefersEphemeralWebBrowserSession = false
+            session.presentationContextProvider = self
+            session.start()
+        }
+    }
+    
+    private func exchangeCodeForTokens(authorizationCode: String, codeVerifier: String) async throws -> TokenResponse {
+        var request = URLRequest(url: URL(string: tokenEndpoint)!)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        
+        let bodyParameters = [
+            "client_id": clientID,
+            "code": authorizationCode,
+            "code_verifier": codeVerifier,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirectURI
+        ]
+        
+        let bodyString = bodyParameters
+            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
+            .joined(separator: "&")
+        
+        request.httpBody = bodyString.data(using: .utf8)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            throw GoogleSignInError.tokenExchangeFailed
+        }
+        
+        return try JSONDecoder().decode(TokenResponse.self, from: data)
+    }
+    
+    private func decodeIDToken(_ idToken: String) throws -> IDTokenPayload {
+        let parts = idToken.components(separatedBy: ".")
+        guard parts.count == 3 else { throw GoogleSignInError.invalidIDToken }
+        
+        var base64 = parts[1]
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        
+        let paddingLength = 4 - base64.count % 4
+        if paddingLength < 4 {
+            base64 += String(repeating: "=", count: paddingLength)
+        }
+        
+        guard let data = Data(base64Encoded: base64) else {
+            throw GoogleSignInError.invalidIDToken
+        }
+        
+        return try JSONDecoder().decode(IDTokenPayload.self, from: data)
+    }
+    
+    private func generateCodeVerifier() -> String {
+        var buffer = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
+        return Data(buffer).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+            .trimmingCharacters(in: .whitespaces)
+    }
+    
+    private func generateCodeChallenge(from verifier: String) -> String {
+        guard let data = verifier.data(using: .utf8) else { return "" }
+        var buffer = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        data.withUnsafeBytes {
+            _ = CC_SHA256($0.baseAddress, CC_LONG(data.count), &buffer)
+        }
+        return Data(buffer).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+            .trimmingCharacters(in: .whitespaces)
+    }
+    
+    func signOut() {
+        currentUser = nil
+    }
+}
+
+extension GoogleSignInManager: ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        let windowScene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first
+        return windowScene?.windows.first ?? ASPresentationAnchor()
+    }
+}
+
+struct TokenResponse: Codable {
+    let accessToken: String
+    let idToken: String
+    let refreshToken: String?
+    let expiresIn: Int
+    let tokenType: String
+    let scope: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case idToken = "id_token"
+        case refreshToken = "refresh_token"
+        case expiresIn = "expires_in"
+        case tokenType = "token_type"
+        case scope
+    }
+}
+
+struct IDTokenPayload: Codable {
+    let iss: String
+    let sub: String
+    let email: String
+    let emailVerified: Bool?
+    let name: String?
+    let givenName: String?
+    let familyName: String?
+    let picture: URL?
+    let locale: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case iss, sub, email, name, locale, picture
+        case emailVerified = "email_verified"
+        case givenName = "given_name"
+        case familyName = "family_name"
+    }
+}
+
+enum GoogleSignInError: LocalizedError {
+    case invalidAuthorizationURL
+    case invalidCallback
+    case missingAuthorizationCode
+    case userCanceled
+    case tokenExchangeFailed
+    case invalidIDToken
+    case backendVerificationFailed
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidAuthorizationURL: return "Could not create authorization URL"
+        case .invalidCallback: return "Invalid callback from Google"
+        case .missingAuthorizationCode: return "No authorization code received"
+        case .userCanceled: return "Sign in was canceled"
+        case .tokenExchangeFailed: return "Failed to exchange code for tokens"
+        case .invalidIDToken: return "Could not decode ID token"
+        case .backendVerificationFailed: return "Backend verification failed"
+        }
+    }
+}
