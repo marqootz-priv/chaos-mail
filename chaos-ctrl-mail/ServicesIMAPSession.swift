@@ -115,9 +115,9 @@ actor IMAPSession {
     // MARK: - Fetch Messages
     
     func fetchMessages(from folder: String, limit: Int) async throws -> [Email] {
-        // DEBUG: Limit to 1 email for debugging
-        let debugLimit = 1
-        print("IMAP: Fetching messages from folder: \(folder) (DEBUG: limited to \(debugLimit) email)")
+        // DEBUG: Limit to 5 emails for debugging
+        let debugLimit = 5
+        print("IMAP: Fetching messages from folder: \(folder) (DEBUG: limited to \(debugLimit) emails)")
         
         // SELECT folder
         try await send("A002 SELECT \(folder)\r\n")
