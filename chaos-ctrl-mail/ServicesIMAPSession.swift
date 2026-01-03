@@ -524,15 +524,18 @@ actor IMAPSession {
             body = body.replacingOccurrences(of: #"----==_mimepart_[^\r\n]*"#, with: "", options: [.regularExpression, .caseInsensitive])
         }
         
-        // Strip threading metadata ONLY for plain text emails
-        // HTML emails will be rendered in WKWebView and don't need this processing
-        let isHTMLContent = body.lowercased().contains("<html") || 
+        // Strip threading metadata:
+        // - For HTML: remove quoted sections (gmail_quote, cite blockquotes, reply/forward blocks)
+        // - For plain text: remove reply dividers, quoted text markers, timestamps, ticket IDs
+        let isHTMLContent = body.lowercased().contains("<html") ||
                             body.lowercased().contains("<!doctype") ||
                             body.lowercased().contains("<body") ||
                             body.lowercased().contains("<div") ||
                             body.lowercased().contains("<table")
         
-        if !isHTMLContent {
+        if isHTMLContent {
+            body = stripThreadingMetadataHTML(body)
+        } else {
             body = stripThreadingMetadata(body)
         }
         
@@ -611,6 +614,36 @@ actor IMAPSession {
         // Remove leading blank lines
         while cleaned.hasPrefix("\n") || cleaned.hasPrefix("\r") {
             cleaned = String(cleaned.dropFirst())
+        }
+        
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func stripThreadingMetadataHTML(_ html: String) -> String {
+        var cleaned = html
+        
+        // Drop gmail_quote / yahoo_quoted / cite blocks everywhere (not just first)
+        let quotePatterns = [
+            #"(?is)<div[^>]*class=["']gmail_quote["'][^>]*>.*?</div>"#,
+            #"(?is)<blockquote[^>]*type=["']cite["'][^>]*>.*?</blockquote>"#,
+            #"(?is)<div[^>]*id=["']divRplyFwdMsg["'][^>]*>.*?</div>"#,
+            #"(?is)<div[^>]*class=["']yahoo_quoted["'][^>]*>.*?</div>"#
+        ]
+        for pattern in quotePatterns {
+            cleaned = cleaned.replacingOccurrences(of: pattern, with: "", options: [.regularExpression])
+        }
+        
+        // Remove Gmail attribution lines
+        cleaned = cleaned.replacingOccurrences(of: #"(?is)<div[^>]*gmail_attr[^>]*>.*?</div>"#, with: "", options: [.regularExpression])
+        
+        // Remove common reply dividers that might be in HTML form
+        cleaned = cleaned.replacingOccurrences(of: #"##- Please type your reply above this line -##"#, with: "", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: #"-----Original Message-----"#, with: "", options: .regularExpression)
+        
+        // If still massive, truncate for safety to avoid WKWebView crashes
+        let maxHTMLSize = 120_000
+        if cleaned.count > maxHTMLSize {
+            cleaned = String(cleaned.prefix(maxHTMLSize)) + "<p style='color:#888;'>[Content truncated for performance]</p>"
         }
         
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
