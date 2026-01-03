@@ -55,32 +55,33 @@ struct HTMLView: UIViewRepresentable {
     }
     
     private func wrapHTML(_ content: String) -> String {
-        // If content already has HTML structure, return as-is
+        // If content already has HTML structure, return as-is (preserves all original styling)
         if content.contains("<html") || content.contains("<HTML") || content.contains("<!DOCTYPE") {
             return content
         }
         
-        // Otherwise, wrap in basic HTML structure
+        // Otherwise, wrap in minimal HTML structure that preserves email styling
+        // Use minimal default styles that don't override the email's CSS
         return """
         <!DOCTYPE html>
         <html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
             <style>
+                /* Minimal default styles that don't override email styling */
                 body {
-                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-                    font-size: 16px;
-                    line-height: 1.5;
-                    color: #000;
-                    background: #fff;
-                    padding: 16px;
                     margin: 0;
+                    padding: 16px;
                     word-wrap: break-word;
+                    /* Only set background if email doesn't specify one */
+                    background-color: #fff;
                 }
+                /* Ensure images scale properly but preserve email styling */
                 img {
                     max-width: 100%;
                     height: auto;
                 }
+                /* Preserve email's font, color, and other styling by not setting defaults */
             </style>
         </head>
         <body>
