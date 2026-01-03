@@ -18,6 +18,7 @@ struct Email: Identifiable, Hashable {
     var isStarred: Bool
     var folder: MailFolder
     var hasAttachments: Bool
+    var attachments: [EmailAttachment]
     
     /// Clean text preview for list view (strips HTML, limits length)
     var preview: String {
@@ -65,7 +66,8 @@ struct Email: Identifiable, Hashable {
         isRead: Bool = false,
         isStarred: Bool = false,
         folder: MailFolder = .inbox,
-        hasAttachments: Bool = false
+        hasAttachments: Bool = false,
+        attachments: [EmailAttachment] = []
     ) {
         self.id = id
         self.from = from
@@ -76,8 +78,18 @@ struct Email: Identifiable, Hashable {
         self.isRead = isRead
         self.isStarred = isStarred
         self.folder = folder
-        self.hasAttachments = hasAttachments
+        self.attachments = attachments
+        self.hasAttachments = hasAttachments || !attachments.isEmpty
     }
+}
+
+struct EmailAttachment: Identifiable, Hashable {
+    let id = UUID()
+    let filename: String
+    let mimeType: String
+    let size: Int
+    let data: Data?
+    let isInline: Bool
 }
 
 // MARK: - Sample Data

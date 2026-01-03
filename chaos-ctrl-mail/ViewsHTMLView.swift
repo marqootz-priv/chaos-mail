@@ -19,8 +19,9 @@ struct HTMLView: UIViewRepresentable {
         // Disable scrolling since it's inside a ScrollView; size to content instead
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.bounces = false
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
+        webView.isOpaque = true
+        webView.backgroundColor = .white
+        webView.scrollView.backgroundColor = .white
         return webView
     }
     
@@ -71,6 +72,7 @@ struct HTMLView: UIViewRepresentable {
                     font-size: 16px;
                     line-height: 1.5;
                     color: #000;
+                    background: #fff;
                     padding: 16px;
                     margin: 0;
                     word-wrap: break-word;

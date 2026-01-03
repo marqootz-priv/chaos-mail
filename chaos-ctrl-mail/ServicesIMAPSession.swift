@@ -310,6 +310,7 @@ actor IMAPSession {
         var subject = ""
         var date = Date()
         var body = ""
+        var attachments: [EmailAttachment] = []
         var isRead = false
         var to: [String] = []
         
@@ -371,9 +372,11 @@ actor IMAPSession {
         print("IMAP: Parsed body length: \(body.count) characters")
         if body.count > 0 {
             print("IMAP: Body preview (first 200 chars): \(String(body.prefix(200)))")
-            // Parse MIME structure, decode encoding, and extract text content
-            body = parseMIMEBody(body)
-            print("IMAP: After MIME parsing, body length: \(body.count) characters")
+            // Parse MIME structure, decode encoding, and extract text content + attachments
+            let parsed = parseMIMEBody(body)
+            body = parsed.body
+            attachments = parsed.attachments
+            print("IMAP: After MIME parsing, body length: \(body.count) characters, attachments: \(attachments.count)")
             if body.count > 0 {
                 print("IMAP: Final body preview: \(String(body.prefix(200)))")
             }
@@ -391,7 +394,9 @@ actor IMAPSession {
             date: date,
             isRead: isRead,
             isStarred: false,
-            folder: .inbox
+            folder: .inbox,
+            hasAttachments: !attachments.isEmpty,
+            attachments: attachments
         )
     }
     
@@ -481,28 +486,18 @@ actor IMAPSession {
         return ""
     }
     
-    private func parseMIMEBody(_ rawBody: String) -> String {
+    private func parseMIMEBody(_ rawBody: String) -> (body: String, attachments: [EmailAttachment]) {
         var body = rawBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        var attachments: [EmailAttachment] = []
         
         // Check if this is a multipart message (has multipart/ in Content-Type header)
         // OR if it has MIME boundary markers (starts with ----)
         let isMultipart = body.lowercased().contains("multipart/") || body.hasPrefix("----")
         
         if isMultipart && body.lowercased().contains("multipart/") {
-            // True multipart message - extract the preferred part
-            // PRIORITY: HTML first (rich content), then plain text (fallback)
-            // Most commercial/marketing emails have HTML with full formatting
-            if let htmlPart = extractMIMEPart(body, preferredType: "text/html") {
-                print("IMAP: Found text/html part, using HTML content")
-                body = processMIMEPart(htmlPart)
-            } else if let plainPart = extractMIMEPart(body, preferredType: "text/plain") {
-                print("IMAP: No HTML found, falling back to text/plain")
-                body = processMIMEPart(plainPart)
-            } else {
-                // Fallback: try to extract any text part
-                print("IMAP: No text/html or text/plain found, trying fallback extraction")
-                body = extractAndProcessFirstTextPart(body)
-            }
+            let result = extractBodyAndAttachments(from: body)
+            body = result.body
+            attachments = result.attachments
         } else {
             // Single part message (may have boundary marker but is still a single part)
             // Process directly - this will handle boundary markers, headers, and decoding
@@ -539,7 +534,98 @@ actor IMAPSession {
             body = stripThreadingMetadata(body)
         }
         
-        return body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (body.trimmingCharacters(in: .whitespacesAndNewlines), attachments)
+    }
+
+    private func extractBodyAndAttachments(from rawBody: String) -> (body: String, attachments: [EmailAttachment]) {
+        var htmlCandidate: String?
+        var plainCandidate: String?
+        var attachments: [EmailAttachment] = []
+        
+        // Find boundary
+        guard let boundaryRange = rawBody.range(of: #"boundary\s*=\s*"?([^"\r\n;]+)"?"#, options: [.regularExpression, .caseInsensitive]),
+              let boundaryMatch = rawBody[boundaryRange].range(of: #"(?<==)\s*"?([^"\r\n;]+)"?"#, options: .regularExpression) else {
+            // Fallback: just process as single part
+            return (processMIMEPart(rawBody), [])
+        }
+        let boundary = rawBody[boundaryMatch]
+            .replacingOccurrences(of: "\"", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        let separator = "--\(boundary)"
+        let sections = rawBody.components(separatedBy: separator)
+        
+        for section in sections {
+            let trimmedSection = section.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedSection.isEmpty || trimmedSection == "--" { continue }
+            
+            // Split headers and content
+            guard let headerEnd = trimmedSection.range(of: "\r\n\r\n") ?? trimmedSection.range(of: "\n\n") else { continue }
+            let headerPart = String(trimmedSection[..<headerEnd.lowerBound])
+            let contentPart = String(trimmedSection[headerEnd.upperBound...])
+            
+            let contentType = extractHeader(headerPart, name: "Content-Type").lowercased()
+            let disposition = extractHeader(headerPart, name: "Content-Disposition").lowercased()
+            let encoding = extractHeader(headerPart, name: "Content-Transfer-Encoding").lowercased()
+            let filename = extractHeaderParameter(headerPart, header: "Content-Disposition", param: "filename")
+                ?? extractHeaderParameter(headerPart, header: "Content-Type", param: "name")
+            
+            let isAttachment = disposition.contains("attachment") || (disposition.contains("inline") && filename != nil)
+            
+            if isAttachment {
+                // Decode attachment content
+                var data: Data?
+                if encoding.contains("base64") {
+                    let clean = contentPart.components(separatedBy: .whitespacesAndNewlines).joined()
+                    data = Data(base64Encoded: clean)
+                } else if encoding.contains("quoted-printable") {
+                    let decoded = decodeQuotedPrintable(contentPart)
+                    data = decoded.data(using: .utf8)
+                } else {
+                    data = contentPart.data(using: .utf8)
+                }
+                
+                let attachment = EmailAttachment(
+                    filename: filename ?? "attachment",
+                    mimeType: contentType.isEmpty ? "application/octet-stream" : contentType,
+                    size: data?.count ?? 0,
+                    data: data,
+                    isInline: disposition.contains("inline")
+                )
+                attachments.append(attachment)
+            } else if contentType.contains("text/html") {
+                htmlCandidate = processMIMEPart(trimmedSection)
+            } else if contentType.contains("text/plain") {
+                plainCandidate = processMIMEPart(trimmedSection)
+            }
+        }
+        
+        if let html = htmlCandidate { return (html, attachments) }
+        if let text = plainCandidate { return (text, attachments) }
+        
+        return (processMIMEPart(rawBody), attachments)
+    }
+    
+    private func extractHeader(_ headers: String, name: String) -> String {
+        let pattern = #"(?im)^\#(name)\s*:\s*([^\r\n;]+)"#
+        if let regex = try? NSRegularExpression(pattern: pattern, options: []),
+           let match = regex.firstMatch(in: headers, range: NSRange(headers.startIndex..., in: headers)),
+           match.numberOfRanges >= 3,
+           let range = Range(match.range(at: 2), in: headers) {
+            return String(headers[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return ""
+    }
+    
+    private func extractHeaderParameter(_ headers: String, header: String, param: String) -> String? {
+        let pattern = #"(?is)\#(header)[^;]*;\s*\#(param)\s*=\s*"?([^";\r\n]+)"?"#
+        if let regex = try? NSRegularExpression(pattern: pattern, options: []),
+           let match = regex.firstMatch(in: headers, range: NSRange(headers.startIndex..., in: headers)),
+           match.numberOfRanges >= 4,
+           let range = Range(match.range(at: 3), in: headers) {
+            return String(headers[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
     }
     
     private func stripThreadingMetadata(_ body: String) -> String {

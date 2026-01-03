@@ -124,30 +124,37 @@ struct EmailDetailView: View {
                 }
                 .padding(.bottom)
                 
-                if email.hasAttachments {
+                if !email.attachments.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Attachments")
                             .font(.headline)
                             .padding(.horizontal)
                             .padding(.top)
                         
-                        HStack {
-                            Image(systemName: "doc.fill")
-                            Text("document.pdf")
-                            Spacer()
-                            Text("2.3 MB")
-                                .foregroundStyle(.secondary)
-                            Button {
-                                // Download attachment
-                            } label: {
-                                Image(systemName: "arrow.down.circle")
+                        ForEach(email.attachments) { attachment in
+                            HStack {
+                                Image(systemName: attachmentIcon(for: attachment.mimeType))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(attachment.filename)
+                                        .font(.body)
+                                        .lineLimit(1)
+                                    Text(formatSize(attachment.size))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button {
+                                    // TODO: Download or share attachment
+                                } label: {
+                                    Image(systemName: "arrow.down.circle")
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
+                            .padding()
+                            .background(.quaternary.opacity(0.5))
+                            .cornerRadius(8)
+                            .padding(.horizontal)
                         }
-                        .padding()
-                        .background(.quaternary.opacity(0.5))
-                        .cornerRadius(8)
-                        .padding(.horizontal)
                     }
                     .padding(.bottom)
                 }
@@ -217,6 +224,22 @@ struct EmailDetailView: View {
                 }
             }
         }
+    }
+
+    private func attachmentIcon(for mimeType: String) -> String {
+        let type = mimeType.lowercased()
+        if type.contains("pdf") { return "doc.richtext.fill" }
+        if type.contains("image") { return "photo.fill" }
+        if type.contains("video") { return "video.fill" }
+        if type.contains("audio") { return "music.note" }
+        if type.contains("zip") || type.contains("compressed") { return "archivebox.fill" }
+        return "doc.fill"
+    }
+    
+    private func formatSize(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB]
+        return formatter.string(fromByteCount: Int64(bytes))
     }
 }
 
