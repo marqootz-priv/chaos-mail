@@ -67,9 +67,9 @@ struct HTMLView: UIViewRepresentable {
     }
     
     private func wrapHTML(_ content: String) -> String {
-        // If content already has HTML structure, return as-is (preserves all original styling)
+        // If content already has HTML structure, inject responsive CSS
         if content.contains("<html") || content.contains("<HTML") || content.contains("<!DOCTYPE") {
-            return content
+            return injectResponsiveCSS(content)
         }
         
         // Otherwise, wrap in minimal HTML structure that preserves email styling
@@ -120,6 +120,67 @@ struct HTMLView: UIViewRepresentable {
         </body>
         </html>
         """
+    }
+    
+    private func injectResponsiveCSS(_ html: String) -> String {
+        // Inject responsive CSS and viewport meta tag into existing HTML
+        var modified = html
+        
+        // Ensure viewport meta tag is present
+        let viewportMeta = "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">"
+        if !modified.lowercased().contains("viewport") {
+            // Insert viewport meta after <head> or <HTML>
+            if let headRange = modified.range(of: "<head>", options: .caseInsensitive) {
+                modified.insert(contentsOf: "\n    \(viewportMeta)\n", at: modified.index(after: headRange.upperBound))
+            } else if let htmlRange = modified.range(of: "<html", options: .caseInsensitive) {
+                // If no <head>, insert before first tag after <html>
+                if let closeRange = modified.range(of: ">", range: htmlRange.upperBound..<modified.endIndex) {
+                    modified.insert(contentsOf: "\n<head>\n    \(viewportMeta)\n</head>", at: modified.index(after: closeRange.upperBound))
+                }
+            }
+        }
+        
+        // Inject responsive CSS into <head> or before </head>
+        let responsiveCSS = """
+        <style>
+            /* Responsive styles to prevent content overflow */
+            body {
+                max-width: 100% !important;
+                overflow-x: hidden !important;
+                word-wrap: break-word !important;
+            }
+            table {
+                max-width: 100% !important;
+                width: 100% !important;
+                table-layout: auto !important;
+            }
+            td, th {
+                word-wrap: break-word !important;
+                overflow-wrap: break-word !important;
+            }
+            div, p, span, section, article {
+                max-width: 100% !important;
+                box-sizing: border-box !important;
+            }
+            img {
+                max-width: 100% !important;
+                height: auto !important;
+            }
+        </style>
+        """
+        
+        // Insert CSS before </head> if head exists, otherwise before </html> or at end
+        if let headCloseRange = modified.range(of: "</head>", options: .caseInsensitive) {
+            modified.insert(contentsOf: "\n    \(responsiveCSS)\n    ", at: headCloseRange.lowerBound)
+        } else if let htmlCloseRange = modified.range(of: "</html>", options: .caseInsensitive) {
+            // Insert head with CSS before </html>
+            modified.insert(contentsOf: "<head>\n    \(viewportMeta)\n    \(responsiveCSS)\n</head>\n", at: htmlCloseRange.lowerBound)
+        } else {
+            // No closing tags, append to end (unlikely but handle it)
+            modified = modified + "\n<head>\n    \(viewportMeta)\n    \(responsiveCSS)\n</head>\n"
+        }
+        
+        return modified
     }
 }
 
