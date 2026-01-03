@@ -136,15 +136,20 @@ actor IMAPSession {
         let messageIds = parseMessageIds(from: searchResponse)
         print("IMAP: Found \(messageIds.count) message IDs")
         
-        // Get the most recent messages (last N messages, since IMAP sequence numbers are ascending)
-        let limitedIds = Array(messageIds.suffix(limit))
-        print("IMAP: Fetching \(limitedIds.count) most recent messages (limit: \(limit))")
+        // To get the most recent emails by date, we need to:
+        // 1. Fetch more messages than we need (to ensure we get the most recent by date)
+        // 2. Sort them by date
+        // 3. Take the top N
+        // Fetch the last 20 messages (or all if less than 20) to ensure we get the most recent by date
+        let fetchCount = min(20, messageIds.count)
+        let idsToFetch = Array(messageIds.suffix(fetchCount))
+        print("IMAP: Fetching \(idsToFetch.count) messages to find the \(limit) most recent by date")
         
         var emails: [Email] = []
         
         // FETCH messages
         var commandTag = 4
-        for id in limitedIds {
+        for id in idsToFetch {
             do {
                 print("IMAP: Fetching message \(id)")
                 let email = try await fetchMessage(id: id, commandTag: commandTag)
@@ -156,8 +161,12 @@ actor IMAPSession {
             }
         }
         
-        print("IMAP: Successfully fetched \(emails.count) emails")
-        return emails
+        // Sort by date (most recent first) and take the top N
+        emails.sort { $0.date > $1.date }
+        let mostRecent = Array(emails.prefix(limit))
+        
+        print("IMAP: Successfully fetched \(mostRecent.count) most recent emails (from \(emails.count) fetched)")
+        return mostRecent
     }
     
     func fetchMessage(id: String, commandTag: Int) async throws -> Email {
