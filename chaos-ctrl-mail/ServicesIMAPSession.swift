@@ -548,67 +548,123 @@ actor IMAPSession {
         var attachments: [EmailAttachment] = []
         
         // Find boundary
-        guard let boundaryRange = rawBody.range(of: #"boundary\s*=\s*"?([^"\r\n;]+)"?"#, options: [.regularExpression, .caseInsensitive]),
-              let boundaryMatch = rawBody[boundaryRange].range(of: #"(?<==)\s*"?([^"\r\n;]+)"?"#, options: .regularExpression) else {
-            // Fallback: just process as single part
+        guard let boundaryMatch = rawBody.range(of: #"boundary\s*=\s*"?([^"\r\n;]+)"?"#, options: [.regularExpression, .caseInsensitive]) else {
+            // Fallback: single part
             return (processMIMEPart(rawBody), [])
         }
-        let boundary = rawBody[boundaryMatch]
+        let boundaryValue = rawBody[boundaryMatch]
+            .replacingOccurrences(of: "boundary", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "=", with: "")
             .replacingOccurrences(of: "\"", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: " ;"))
+        let separator = "--\(boundaryValue)"
         
-        let separator = "--\(boundary)"
-        let sections = rawBody.components(separatedBy: separator)
+        let parts = rawBody.components(separatedBy: separator)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0 != "--" }
         
-        for section in sections {
-            let trimmedSection = section.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmedSection.isEmpty || trimmedSection == "--" { continue }
+        for part in parts {
+            // Split headers and body
+            guard let headerEnd = part.range(of: "\r\n\r\n") ?? part.range(of: "\n\n") else { continue }
+            let headers = String(part[..<headerEnd.lowerBound])
+            var content = String(part[headerEnd.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
             
-            // Split headers and content
-            guard let headerEnd = trimmedSection.range(of: "\r\n\r\n") ?? trimmedSection.range(of: "\n\n") else { continue }
-            let headerPart = String(trimmedSection[..<headerEnd.lowerBound])
-            let contentPart = String(trimmedSection[headerEnd.upperBound...])
+            let contentType = extractHeader(headers, name: "Content-Type").lowercased()
+            let disposition = extractHeader(headers, name: "Content-Disposition").lowercased()
+            let encoding = extractHeader(headers, name: "Content-Transfer-Encoding").lowercased()
+            let filename = extractHeaderParameter(headers, header: "Content-Disposition", param: "filename")
+                ?? extractHeaderParameter(headers, header: "Content-Type", param: "name")
             
-            let contentType = extractHeader(headerPart, name: "Content-Type").lowercased()
-            let disposition = extractHeader(headerPart, name: "Content-Disposition").lowercased()
-            let encoding = extractHeader(headerPart, name: "Content-Transfer-Encoding").lowercased()
-            let filename = extractHeaderParameter(headerPart, header: "Content-Disposition", param: "filename")
-                ?? extractHeaderParameter(headerPart, header: "Content-Type", param: "name")
+            // If this part still contains a trailing boundary, strip it
+            if let boundaryRange = content.range(of: "\r\n--") {
+                content = String(content[..<boundaryRange.lowerBound])
+            }
             
             let isAttachment = disposition.contains("attachment") || (disposition.contains("inline") && filename != nil)
             
             if isAttachment {
-                // Decode attachment content
-                var data: Data?
-                if encoding.contains("base64") {
-                    let clean = contentPart.components(separatedBy: .whitespacesAndNewlines).joined()
-                    data = Data(base64Encoded: clean)
-                } else if encoding.contains("quoted-printable") {
-                    let decoded = decodeQuotedPrintable(contentPart)
-                    data = decoded.data(using: .utf8)
-                } else {
-                    data = contentPart.data(using: .utf8)
-                }
-                
+                let decodedData = decodeAttachmentContent(content, encoding: encoding)
+                let decodedFilename = filename.flatMap { decodeRFC2047($0) } ?? "attachment"
                 let attachment = EmailAttachment(
-                    filename: filename ?? "attachment",
+                    filename: decodedFilename,
                     mimeType: contentType.isEmpty ? "application/octet-stream" : contentType,
-                    size: data?.count ?? 0,
-                    data: data,
+                    size: decodedData.count,
+                    data: decodedData.isEmpty ? nil : decodedData,
                     isInline: disposition.contains("inline")
                 )
                 attachments.append(attachment)
             } else if contentType.contains("text/html") {
-                htmlCandidate = processMIMEPart(trimmedSection)
+                htmlCandidate = decodeTextContent(content, encoding: encoding)
             } else if contentType.contains("text/plain") {
-                plainCandidate = processMIMEPart(trimmedSection)
+                plainCandidate = decodeTextContent(content, encoding: encoding)
             }
         }
         
-        if let html = htmlCandidate { return (html, attachments) }
-        if let text = plainCandidate { return (text, attachments) }
-        
+        if let html = htmlCandidate, !html.isEmpty { return (html, attachments) }
+        if let text = plainCandidate, !text.isEmpty { return (text, attachments) }
         return (processMIMEPart(rawBody), attachments)
+    }
+    
+    private func decodeTextContent(_ content: String, encoding: String) -> String {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch encoding.lowercased() {
+        case "quoted-printable":
+            return decodeQuotedPrintable(trimmed)
+        case "base64":
+            if let data = Data(base64Encoded: trimmed),
+               let decoded = String(data: data, encoding: .utf8) {
+                return decoded
+            }
+            return trimmed
+        default:
+            return trimmed
+        }
+    }
+    
+    private func decodeAttachmentContent(_ content: String, encoding: String) -> Data {
+        let cleaned = content
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        if encoding.lowercased().contains("base64") {
+            return Data(base64Encoded: cleaned) ?? Data()
+        }
+        if encoding.lowercased().contains("quoted-printable") {
+            let decoded = decodeQuotedPrintable(content)
+            return decoded.data(using: .utf8) ?? Data()
+        }
+        return cleaned.data(using: .utf8) ?? Data()
+    }
+    
+    private func decodeRFC2047(_ encoded: String) -> String {
+        let pattern = #"=\?([^?]+)\?([QBqb])\?([^?]+)\?="#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+            return encoded
+        }
+        
+        var result = encoded
+        let matches = regex.matches(in: encoded, range: NSRange(encoded.startIndex..., in: encoded))
+        for match in matches.reversed() {
+            guard match.numberOfRanges == 4,
+                  let fullRange = Range(match.range(at: 0), in: encoded),
+                  let encodingRange = Range(match.range(at: 2), in: encoded),
+                  let dataRange = Range(match.range(at: 3), in: encoded) else { continue }
+            
+            let encType = String(encoded[encodingRange]).uppercased()
+            let dataStr = String(encoded[dataRange])
+            var decodedPart = ""
+            if encType == "Q" {
+                decodedPart = dataStr.replacingOccurrences(of: "_", with: " ")
+                decodedPart = decodeQuotedPrintable(decodedPart)
+            } else if encType == "B" {
+                if let d = Data(base64Encoded: dataStr), let s = String(data: d, encoding: .utf8) {
+                    decodedPart = s
+                }
+            }
+            result.replaceSubrange(fullRange, with: decodedPart)
+        }
+        return result
     }
     
     private func extractHeader(_ headers: String, name: String) -> String {
