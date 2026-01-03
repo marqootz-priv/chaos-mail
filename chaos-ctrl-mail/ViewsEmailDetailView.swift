@@ -217,13 +217,6 @@ struct EmailDetailView: View {
                 }
             }
         }
-        .onAppear {
-            if !email.isRead {
-                Task {
-                    try? await mailStore.toggleRead(email: email)
-                }
-            }
-        }
     }
 
     private func attachmentIcon(for mimeType: String) -> String {

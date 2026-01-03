@@ -115,9 +115,7 @@ actor IMAPSession {
     // MARK: - Fetch Messages
     
     func fetchMessages(from folder: String, limit: Int) async throws -> [Email] {
-        // DEBUG: Limit to 5 emails for debugging
-        let debugLimit = 5
-        print("IMAP: Fetching messages from folder: \(folder) (DEBUG: limited to \(debugLimit) emails)")
+        print("IMAP: Fetching messages from folder: \(folder) (limit: \(limit))")
         
         // SELECT folder
         try await send("A002 SELECT \(folder)\r\n")
@@ -129,7 +127,7 @@ actor IMAPSession {
             throw EmailServiceError.serverError("Failed to select folder")
         }
         
-        // SEARCH for all messages
+        // SEARCH for all messages (returns message sequence numbers in ascending order, higher = newer)
         try await send("A003 SEARCH ALL\r\n")
         let searchResponse = try await receiveUntilComplete()
         print("IMAP SEARCH Response: \(searchResponse)")
@@ -138,9 +136,9 @@ actor IMAPSession {
         let messageIds = parseMessageIds(from: searchResponse)
         print("IMAP: Found \(messageIds.count) message IDs")
         
-        // DEBUG: Use debugLimit instead of limit
-        let limitedIds = Array(messageIds.suffix(debugLimit))
-        print("IMAP: Fetching \(limitedIds.count) messages (DEBUG limit: \(debugLimit), original limit: \(limit))")
+        // Get the most recent messages (last N messages, since IMAP sequence numbers are ascending)
+        let limitedIds = Array(messageIds.suffix(limit))
+        print("IMAP: Fetching \(limitedIds.count) most recent messages (limit: \(limit))")
         
         var emails: [Email] = []
         
