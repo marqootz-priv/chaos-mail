@@ -367,18 +367,22 @@ actor IMAPSession {
             to = extractToAddresses(from: envelopeContent)
         }
         
-        // Parse body - handle MIME encoding and extract actual content
+        // Parse body - handle MIME encoding and extract actual content + attachments
         body = parseBody(from: bodyResponse)
         print("IMAP: Parsed body length: \(body.count) characters")
+        var parsedAttachments: [EmailAttachment] = []
         if body.count > 0 {
-            print("IMAP: Body preview (first 200 chars): \(String(body.prefix(200)))")
+            print("IMAP: Body preview (first 500 chars): \(String(body.prefix(500)))")
             // Parse MIME structure, decode encoding, and extract text content + attachments
             let parsed = parseMIMEBody(body)
             body = parsed.body
-            attachments = parsed.attachments
-            print("IMAP: After MIME parsing, body length: \(body.count) characters, attachments: \(attachments.count)")
+            parsedAttachments = parsed.attachments
+            print("IMAP: After MIME parsing, body length: \(body.count) characters, attachments: \(parsedAttachments.count)")
             if body.count > 0 {
                 print("IMAP: Final body preview: \(String(body.prefix(200)))")
+            } else {
+                print("IMAP: WARNING - Body became empty after MIME parsing!")
+                print("IMAP: Original body length was: \(parseBody(from: bodyResponse).count)")
             }
         } else {
             print("IMAP: WARNING - Body is empty, bodyResponse length: \(bodyResponse.count)")
@@ -395,8 +399,8 @@ actor IMAPSession {
             isRead: isRead,
             isStarred: false,
             folder: .inbox,
-            hasAttachments: !attachments.isEmpty,
-            attachments: attachments
+            hasAttachments: !parsedAttachments.isEmpty,
+            attachments: parsedAttachments
         )
     }
     
@@ -487,122 +491,237 @@ actor IMAPSession {
     }
     
     private func parseMIMEBody(_ rawBody: String) -> (body: String, attachments: [EmailAttachment]) {
-        var body = rawBody.trimmingCharacters(in: .whitespacesAndNewlines)
-        var attachments: [EmailAttachment] = []
+        let trimmedRaw = rawBody.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // Check if this is a multipart message (has multipart/ in Content-Type header)
-        // OR if it has MIME boundary markers (starts with ----)
-        let isMultipart = body.lowercased().contains("multipart/") || body.hasPrefix("----")
+        // BODY[] from IMAP includes full RFC 822 message: email headers + blank line + MIME body
+        // The boundary is typically in a Content-Type header in the MIME body section (after the blank line)
         
-        if isMultipart && body.lowercased().contains("multipart/") {
-            let result = extractBodyAndAttachments(from: body)
-            body = result.body
-            attachments = result.attachments
-        } else {
-            // Single part message (may have boundary marker but is still a single part)
-            // Process directly - this will handle boundary markers, headers, and decoding
-            body = processMIMEPart(body)
-            
-            // Double-check: if body still contains quoted-printable sequences, decode again
-            if body.contains("=") && body.range(of: #"=[0-9A-F]{2}"#, options: [.regularExpression, .caseInsensitive]) != nil {
-                print("IMAP: Body still contains quoted-printable sequences after processing, decoding again")
-                body = decodeQuotedPrintable(body)
+        // Step 1: Split email headers from MIME body at first blank line
+        let (emailHeaders, mimeBody) = splitAtFirstBlankLine(trimmedRaw)
+        print("IMAP: parseMIMEBody - emailHeaders length: \(emailHeaders.count), mimeBody length: \(mimeBody.count)")
+        if mimeBody.count > 0 {
+            print("IMAP: parseMIMEBody - mimeBody preview (first 300 chars): \(String(mimeBody.prefix(300)))")
+        }
+        
+        // Step 2: Extract boundary - search in emailHeaders first, then mimeBody
+        // The Content-Type header with boundary can be in either place
+        var boundary = ""
+        
+        // First try emailHeaders (where Content-Type: multipart/...; boundary=... often is)
+        if !emailHeaders.isEmpty {
+            boundary = extractHeaderParameter(emailHeaders, header: "Content-Type", param: "boundary") ?? ""
+            if !boundary.isEmpty {
+                print("IMAP: parseMIMEBody - found boundary in emailHeaders: '\(boundary)'")
             }
         }
         
-        // Final verification: ensure no MIME artifacts remain
-        if body.contains("Content-Type:") || body.contains("Content-Transfer-Encoding:") || body.contains("----==_mimepart_") {
-            print("IMAP: WARNING - MIME artifacts still present in body after parsing")
-            // Remove them aggressively
-            body = body.replacingOccurrences(of: #"Content-Type:[^\r\n]*"#, with: "", options: [.regularExpression, .caseInsensitive])
-            body = body.replacingOccurrences(of: #"Content-Transfer-Encoding:[^\r\n]*"#, with: "", options: [.regularExpression, .caseInsensitive])
-            body = body.replacingOccurrences(of: #"----==_mimepart_[^\r\n]*"#, with: "", options: [.regularExpression, .caseInsensitive])
+        // If not found, try mimeBody (first few lines where Content-Type might be)
+        if boundary.isEmpty {
+            let firstLines = mimeBody.components(separatedBy: .newlines).prefix(20).joined(separator: "\n")
+            boundary = extractHeaderParameter(firstLines, header: "Content-Type", param: "boundary") ?? ""
+            if !boundary.isEmpty {
+                print("IMAP: parseMIMEBody - found boundary in mimeBody: '\(boundary)'")
+            }
         }
         
-        // Strip threading metadata:
-        // - For HTML: remove quoted sections (gmail_quote, cite blockquotes, reply/forward blocks)
-        // - For plain text: remove reply dividers, quoted text markers, timestamps, ticket IDs
-        let isHTMLContent = body.lowercased().contains("<html") ||
-                            body.lowercased().contains("<!doctype") ||
-                            body.lowercased().contains("<body") ||
-                            body.lowercased().contains("<div") ||
-                            body.lowercased().contains("<table")
+        // If still not found, try regex fallback on the full content
+        if boundary.isEmpty {
+            let searchContent = !emailHeaders.isEmpty ? emailHeaders + "\n\n" + mimeBody : trimmedRaw
+            let boundaryPattern = #"boundary\s*=\s*"([^"]+)"|boundary\s*=\s*([^\s\r\n;]+)"#
+            if let regex = try? NSRegularExpression(pattern: boundaryPattern, options: [.caseInsensitive]) {
+                let nsString = searchContent as NSString
+                let range = NSRange(location: 0, length: min(nsString.length, 10000)) // Search first 10KB
+                if let match = regex.firstMatch(in: searchContent, options: [], range: range) {
+                    // Try capture group 1 (quoted) first, then group 2 (unquoted)
+                    if match.numberOfRanges > 1 && match.range(at: 1).location != NSNotFound {
+                        let boundaryRange = match.range(at: 1)
+                        boundary = nsString.substring(with: boundaryRange)
+                    } else if match.numberOfRanges > 2 && match.range(at: 2).location != NSNotFound {
+                        let boundaryRange = match.range(at: 2)
+                        boundary = nsString.substring(with: boundaryRange)
+                    }
+                    if !boundary.isEmpty {
+                        print("IMAP: parseMIMEBody - found boundary via regex fallback: '\(boundary)'")
+                    }
+                }
+            }
+        }
         
-        if isHTMLContent {
-            body = stripThreadingMetadataHTML(body)
+        // Step 3: Parse MIME parts - use mimeBody (content after email headers)
+        let bodyContent = !emailHeaders.isEmpty ? mimeBody : trimmedRaw
+        print("IMAP: parseMIMEBody - calling parseMIMEParts with boundary='\(boundary)', bodyContent length=\(bodyContent.count)")
+        let (body, isHTML, attachments) = parseMIMEParts(bodyContent, boundary: boundary)
+        print("IMAP: parseMIMEBody - parseMIMEParts returned body length=\(body.count), isHTML=\(isHTML), attachments=\(attachments.count)")
+        
+        // Step 4: Strip threading metadata
+        let finalBody: String
+        if isHTML {
+            finalBody = stripThreadingMetadataHTML(body)
         } else {
-            body = stripThreadingMetadata(body)
-        }
-
-        // Safety: if quoted-printable artifacts remain, decode once more
-        if body.range(of: #"=[0-9A-F]{2}"#, options: [.regularExpression, .caseInsensitive]) != nil {
-            body = decodeQuotedPrintable(body)
+            finalBody = stripThreadingMetadata(body)
         }
         
-        return (body.trimmingCharacters(in: .whitespacesAndNewlines), attachments)
+        // Step 5: Final safety check - decode any remaining quoted-printable artifacts
+        let cleanedBody: String
+        if finalBody.range(of: #"=[0-9A-F]{2}"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            cleanedBody = decodeQuotedPrintable(finalBody)
+        } else {
+            cleanedBody = finalBody
+        }
+        
+        return (cleanedBody.trimmingCharacters(in: .whitespacesAndNewlines), attachments)
+    }
+    
+    private func splitAtFirstBlankLine(_ content: String) -> (headers: String, body: String) {
+        // Find first occurrence of \r\n\r\n or \n\n
+        if let range = content.range(of: "\r\n\r\n") {
+            let headers = String(content[..<range.lowerBound])
+            let body = String(content[range.upperBound...])
+            return (headers, body)
+        } else if let range = content.range(of: "\n\n") {
+            let headers = String(content[..<range.lowerBound])
+            let body = String(content[range.upperBound...])
+            return (headers, body)
+        }
+        // No blank line found - assume entire content is body (single-part message)
+        return ("", content)
     }
 
-    private func extractBodyAndAttachments(from rawBody: String) -> (body: String, attachments: [EmailAttachment]) {
-        var htmlCandidate: String?
-        var plainCandidate: String?
+    private func parseMIMEParts(_ mimeBody: String, boundary: String) -> (body: String, isHTML: Bool, attachments: [EmailAttachment]) {
+        var htmlBody = ""
+        var plainBody = ""
         var attachments: [EmailAttachment] = []
         
-        // Find boundary
-        guard let boundaryMatch = rawBody.range(of: #"boundary\s*=\s*"?([^"\r\n;]+)"?"#, options: [.regularExpression, .caseInsensitive]) else {
-            // Fallback: single part
-            return (processMIMEPart(rawBody), [])
+        // If no boundary, treat as single-part message
+        if boundary.isEmpty {
+            print("IMAP: parseMIMEParts - no boundary found, treating as single-part")
+            // Single part - use processMIMEPart to handle headers and decoding
+            let processed = processMIMEPart(mimeBody)
+            let isHTML = processed.lowercased().contains("<html") ||
+                        processed.lowercased().contains("<!doctype") ||
+                        processed.lowercased().contains("<body")
+            print("IMAP: parseMIMEParts - single-part, processed length: \(processed.count)")
+            return (processed, isHTML, attachments)
         }
-        let boundaryValue = rawBody[boundaryMatch]
-            .replacingOccurrences(of: "boundary", with: "", options: .caseInsensitive)
-            .replacingOccurrences(of: "=", with: "")
-            .replacingOccurrences(of: "\"", with: "")
-            .trimmingCharacters(in: CharacterSet(charactersIn: " ;"))
-        let separator = "--\(boundaryValue)"
         
-        let parts = rawBody.components(separatedBy: separator)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && $0 != "--" }
+        // Split by boundary markers
+        let separator = "--\(boundary)"
+        var parts = mimeBody.components(separatedBy: separator)
         
-        for part in parts {
-            // Split headers and body
-            guard let headerEnd = part.range(of: "\r\n\r\n") ?? part.range(of: "\n\n") else { continue }
-            let headers = String(part[..<headerEnd.lowerBound])
-            var content = String(part[headerEnd.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            let contentType = extractHeader(headers, name: "Content-Type").lowercased()
-            let disposition = extractHeader(headers, name: "Content-Disposition").lowercased()
-            let encoding = extractHeader(headers, name: "Content-Transfer-Encoding").lowercased()
-            let filename = extractHeaderParameter(headers, header: "Content-Disposition", param: "filename")
-                ?? extractHeaderParameter(headers, header: "Content-Type", param: "name")
-            
-            // If this part still contains a trailing boundary, strip it
-            if let boundaryRange = content.range(of: "\r\n--") {
-                content = String(content[..<boundaryRange.lowerBound])
+        // Remove empty parts and clean up
+        parts = parts.map { part in
+            var cleaned = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Remove leading/trailing newlines and boundary markers
+            if cleaned.hasPrefix("--") {
+                cleaned = String(cleaned.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return cleaned
+        }.filter { !$0.isEmpty && $0 != "--" }
+        
+        print("IMAP: parseMIMEParts - split into \(parts.count) parts with boundary '\(boundary)'")
+        
+        for (index, part) in parts.enumerated() {
+            // Skip closing boundary marker
+            if part.trimmingCharacters(in: .whitespacesAndNewlines) == "--" {
+                continue
             }
             
-            let isAttachment = disposition.contains("attachment") || (disposition.contains("inline") && filename != nil)
+            // Split headers from content at first blank line
+            // Note: parts may start with a blank line (from the boundary separator)
+            var partToParse = part
+            // Remove leading blank lines
+            while partToParse.hasPrefix("\r\n") || partToParse.hasPrefix("\n") {
+                partToParse = String(partToParse.dropFirst(partToParse.hasPrefix("\r\n") ? 2 : 1))
+            }
+            
+            guard let headerEndRange = partToParse.range(of: "\r\n\r\n") ?? partToParse.range(of: "\n\n") else {
+                print("IMAP: parseMIMEParts - part \(index) has no header/content separator, skipping (length: \(partToParse.count))")
+                if partToParse.count > 0 {
+                    print("IMAP: parseMIMEParts - part \(index) preview: \(String(partToParse.prefix(200)))")
+                }
+                continue
+            }
+            
+            let partHeaders = String(partToParse[..<headerEndRange.lowerBound])
+            var partContent = String(partToParse[headerEndRange.upperBound...])
+            
+            // CRITICAL: Remove content that extends to the next boundary
+            // Find the start of the next boundary marker (--boundary or --boundary--)
+            if let nextBoundary = partContent.range(of: "\r\n--") ?? partContent.range(of: "\n--") {
+                partContent = String(partContent[..<nextBoundary.lowerBound])
+            }
+            partContent = partContent.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // Extract headers
+            print("IMAP: parseMIMEParts - part \(index) headers preview (first 200 chars): \(String(partHeaders.prefix(200)))")
+            let contentType = extractHeader(partHeaders, name: "Content-Type")
+            let contentDisposition = extractHeader(partHeaders, name: "Content-Disposition")
+            let encoding = extractHeader(partHeaders, name: "Content-Transfer-Encoding")
+            let filename = extractHeaderParameter(partHeaders, header: "Content-Disposition", param: "filename")
+                ?? extractHeaderParameter(partHeaders, header: "Content-Type", param: "name")
+            
+            let contentTypeLower = contentType.lowercased()
+            let dispositionLower = contentDisposition.lowercased()
+            
+            print("IMAP: parseMIMEParts - part \(index): Content-Type=\(contentTypeLower.prefix(50)), Disposition=\(dispositionLower), Content length=\(partContent.count)")
+            
+            // Handle nested multipart messages
+            if contentTypeLower.contains("multipart/") {
+                // This is a nested multipart - recursively parse it
+                let nestedBoundary = extractHeaderParameter(partHeaders, header: "Content-Type", param: "boundary") ?? ""
+                if !nestedBoundary.isEmpty {
+                    print("IMAP: parseMIMEParts - part \(index) is nested multipart with boundary '\(nestedBoundary)', parsing recursively")
+                    let (nestedBody, nestedIsHTML, nestedAttachments) = parseMIMEParts(partContent, boundary: nestedBoundary)
+                    if !nestedBody.isEmpty {
+                        if nestedIsHTML {
+                            htmlBody = nestedBody
+                        } else {
+                            plainBody = nestedBody
+                        }
+                    }
+                    attachments.append(contentsOf: nestedAttachments)
+                } else {
+                    print("IMAP: parseMIMEParts - part \(index) is multipart but no boundary found, skipping")
+                }
+                continue
+            }
+            
+            // Categorize this part
+            let isAttachment = dispositionLower.contains("attachment") ||
+                              (dispositionLower.contains("inline") && filename != nil)
             
             if isAttachment {
-                let decodedData = decodeAttachmentContent(content, encoding: encoding)
+                // ATTACHMENT - decode to Data and add to attachments array
+                // DO NOT include in body
+                let decodedData = decodeAttachmentData(partContent, encoding: encoding)
                 let decodedFilename = filename.flatMap { decodeRFC2047($0) } ?? "attachment"
                 let attachment = EmailAttachment(
                     filename: decodedFilename,
-                    mimeType: contentType.isEmpty ? "application/octet-stream" : contentType,
+                    mimeType: contentTypeLower.isEmpty ? "application/octet-stream" : contentTypeLower,
                     size: decodedData.count,
                     data: decodedData.isEmpty ? nil : decodedData,
-                    isInline: disposition.contains("inline")
+                    isInline: dispositionLower.contains("inline")
                 )
                 attachments.append(attachment)
-            } else if contentType.contains("text/html") {
-                htmlCandidate = decodeTextContent(content, encoding: encoding)
-            } else if contentType.contains("text/plain") {
-                plainCandidate = decodeTextContent(content, encoding: encoding)
+                print("IMAP: parseMIMEParts - part \(index) added as attachment: \(decodedFilename)")
+            } else if contentTypeLower.contains("text/html") {
+                // HTML BODY - decode and store
+                htmlBody = decodeTextContent(partContent, encoding: encoding)
+                print("IMAP: parseMIMEParts - part \(index) added as HTML body, length: \(htmlBody.count)")
+            } else if contentTypeLower.contains("text/plain") {
+                // PLAIN TEXT BODY - decode and store
+                plainBody = decodeTextContent(partContent, encoding: encoding)
+                print("IMAP: parseMIMEParts - part \(index) added as plain text body, length: \(plainBody.count)")
+            } else {
+                print("IMAP: parseMIMEParts - part \(index) ignored (not text/html, text/plain, or attachment)")
             }
         }
         
-        if let html = htmlCandidate, !html.isEmpty { return (html, attachments) }
-        if let text = plainCandidate, !text.isEmpty { return (text, attachments) }
-        return (processMIMEPart(rawBody), attachments)
+        // Prefer HTML over plain text (like Apple Mail)
+        let finalBody = !htmlBody.isEmpty ? htmlBody : plainBody
+        let isHTML = !htmlBody.isEmpty
+        
+        return (finalBody, isHTML, attachments)
     }
     
     private func decodeTextContent(_ content: String, encoding: String) -> String {
@@ -621,20 +740,22 @@ actor IMAPSession {
         }
     }
     
-    private func decodeAttachmentContent(_ content: String, encoding: String) -> Data {
+    private func decodeAttachmentData(_ content: String, encoding: String) -> Data {
         let cleaned = content
             .replacingOccurrences(of: "\r", with: "")
             .replacingOccurrences(of: "\n", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         
-        if encoding.lowercased().contains("base64") {
+        switch encoding.lowercased() {
+        case "base64":
             return Data(base64Encoded: cleaned) ?? Data()
-        }
-        if encoding.lowercased().contains("quoted-printable") {
+        case "quoted-printable":
             let decoded = decodeQuotedPrintable(content)
             return decoded.data(using: .utf8) ?? Data()
+        default:
+            // For 7bit, 8bit, binary - convert to Data directly
+            return cleaned.data(using: .utf8) ?? Data()
         }
-        return cleaned.data(using: .utf8) ?? Data()
     }
     
     private func decodeRFC2047(_ encoded: String) -> String {
@@ -668,22 +789,51 @@ actor IMAPSession {
     }
     
     private func extractHeader(_ headers: String, name: String) -> String {
-        let pattern = #"(?im)^\#(name)\s*:\s*([^\r\n;]+)"#
-        if let regex = try? NSRegularExpression(pattern: pattern, options: []),
-           let match = regex.firstMatch(in: headers, range: NSRange(headers.startIndex..., in: headers)),
-           match.numberOfRanges >= 3,
-           let range = Range(match.range(at: 2), in: headers) {
-            return String(headers[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = headers.components(separatedBy: .newlines)
+        var headerLineIndex = -1
+        
+        // Find the line that starts with the header name
+        for (index, line) in lines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.lowercased().hasPrefix(name.lowercased() + ":") {
+                headerLineIndex = index
+                break
+            }
         }
+        
+        if headerLineIndex >= 0 {
+            // Extract the value from the header line (everything after the colon)
+            let headerLine = lines[headerLineIndex]
+            if let colonRange = headerLine.range(of: ":") {
+                var value = String(headerLine[colonRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+                
+                // Collect continuation lines (lines starting with space/tab)
+                for i in (headerLineIndex + 1)..<lines.count {
+                    let line = lines[i]
+                    if line.hasPrefix(" ") || line.hasPrefix("\t") {
+                        value += " " + line.trimmingCharacters(in: .whitespaces)
+                    } else if !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                        // Non-empty line that doesn't start with space/tab - end of header
+                        break
+                    }
+                }
+                
+                return value.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        
         return ""
     }
     
     private func extractHeaderParameter(_ headers: String, header: String, param: String) -> String? {
-        let pattern = #"(?is)\#(header)[^;]*;\s*\#(param)\s*=\s*"?([^";\r\n]+)"?"#
+        // Escape special regex characters in header and param names
+        let escapedHeader = NSRegularExpression.escapedPattern(for: header)
+        let escapedParam = NSRegularExpression.escapedPattern(for: param)
+        let pattern = "(?is)\(escapedHeader)[^;]*;\\s*\(escapedParam)\\s*=\\s*\"?([^\";\\r\\n]+)\"?"
         if let regex = try? NSRegularExpression(pattern: pattern, options: []),
            let match = regex.firstMatch(in: headers, range: NSRange(headers.startIndex..., in: headers)),
-           match.numberOfRanges >= 4,
-           let range = Range(match.range(at: 3), in: headers) {
+           match.numberOfRanges >= 2,
+           let range = Range(match.range(at: 1), in: headers) {
             return String(headers[range]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return nil
