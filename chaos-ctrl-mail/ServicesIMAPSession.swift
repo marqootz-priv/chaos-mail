@@ -356,6 +356,8 @@ actor IMAPSession {
                 if let secondQuote = envelopeContent[subjectStart...].range(of: #""([^"]+)""#, options: .regularExpression) {
                     subject = String(envelopeContent[secondQuote])
                         .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                    // Decode RFC 2047 encoded subjects (e.g., =?UTF-8?B?...?= or =?UTF-8?Q?...?=)
+                    subject = decodeRFC2047(subject)
                 }
             }
             

@@ -75,11 +75,30 @@ struct HTMLView: UIViewRepresentable {
                     word-wrap: break-word;
                     /* Only set background if email doesn't specify one */
                     background-color: #fff;
+                    /* Ensure content doesn't overflow screen width */
+                    max-width: 100%;
+                    overflow-x: hidden;
                 }
                 /* Ensure images scale properly but preserve email styling */
                 img {
                     max-width: 100%;
                     height: auto;
+                }
+                /* Make tables responsive */
+                table {
+                    max-width: 100%;
+                    width: 100% !important;
+                    table-layout: auto;
+                }
+                /* Ensure table cells wrap */
+                td, th {
+                    word-wrap: break-word;
+                    overflow-wrap: break-word;
+                }
+                /* Make divs and other block elements responsive */
+                div, p, span {
+                    max-width: 100%;
+                    box-sizing: border-box;
                 }
                 /* Preserve email's font, color, and other styling by not setting defaults */
             </style>
