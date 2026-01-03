@@ -40,8 +40,17 @@ class EmailService {
             )
             
             try await imapSession?.connect()
+            print("EmailService: IMAP connected successfully")
             
-            // Initialize SMTP session
+            // Set isConnected = true immediately after IMAP connection succeeds
+            // (SMTP is optional and not needed for fetching emails)
+            isConnected = true
+            syncError = nil
+            print("EmailService.connect: IMAP connection successful, isConnected set to true")
+            
+            // Initialize SMTP session (optional - only needed for sending emails)
+            // Note: SMTP on port 587 requires STARTTLS, which isn't implemented yet
+            // For now, we'll skip SMTP connection to allow email fetching to work
             smtpSession = SMTPSession(
                 server: account.smtpServer,
                 port: account.smtpPort,
@@ -50,13 +59,20 @@ class EmailService {
                 useSSL: account.smtpUseSSL
             )
             
-            try await smtpSession?.connect()
-            
-            isConnected = true
-            syncError = nil
+            // Try to connect to SMTP, but don't fail if it doesn't work
+            // (SMTP is only needed for sending, not receiving emails)
+            do {
+                try await smtpSession?.connect()
+                print("EmailService: SMTP connected successfully")
+            } catch {
+                print("EmailService: SMTP connection failed (non-fatal): \(error)")
+                // SMTP connection failure is not fatal - we can still fetch emails
+                smtpSession = nil
+            }
         } catch {
             isConnected = false
             syncError = error
+            print("EmailService.connect: Connection failed: \(error)")
             throw error
         }
     }
@@ -70,11 +86,14 @@ class EmailService {
     // MARK: - Fetch Emails
     
     func fetchEmails(folder: MailFolder, limit: Int = 50) async throws -> [Email] {
+        print("EmailService.fetchEmails: isConnected=\(isConnected), imapSession=\(imapSession != nil ? "exists" : "nil")")
         guard let session = imapSession, isConnected else {
+            print("EmailService.fetchEmails: Not connected - isConnected=\(isConnected), imapSession exists=\(imapSession != nil)")
             throw EmailServiceError.notConnected
         }
         
         let folderName = mapFolderToIMAP(folder)
+        print("EmailService.fetchEmails: Calling fetchMessages for folder: \(folderName)")
         return try await session.fetchMessages(from: folderName, limit: limit)
     }
     
@@ -83,7 +102,8 @@ class EmailService {
             throw EmailServiceError.notConnected
         }
         
-        return try await session.fetchMessage(id: id)
+        // Use a fixed command tag for single message fetch
+        return try await session.fetchMessage(id: id, commandTag: 100)
     }
     
     // MARK: - Email Operations

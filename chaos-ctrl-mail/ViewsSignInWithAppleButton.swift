@@ -24,6 +24,7 @@ struct SignInWithAppleButton: View {
             onCompletion: onCompletion
         )
         .frame(height: 50)
+        .frame(maxWidth: 375) // Apple's maximum button width
         .cornerRadius(8)
     }
 }

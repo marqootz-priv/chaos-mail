@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct SidebarView: View {
-    @Bindable var mailStore: MailStore
+    @Bindable var mailStore: IntegratedMailStore
     @Bindable var accountManager: AccountManager
     @State private var showingQuickSetup = false
     
@@ -65,6 +65,12 @@ struct SidebarView: View {
                         EmailListView(mailStore: mailStore)
                             .onAppear {
                                 mailStore.selectedFolder = folder
+                                // Only sync if connected - connection happens in ContentView
+                                Task {
+                                    if mailStore.emailService.isConnected {
+                                        try? await mailStore.syncCurrentFolder()
+                                    }
+                                }
                             }
                     } label: {
                         folderRow(for: folder)
@@ -99,6 +105,6 @@ struct SidebarView: View {
 
 #Preview {
     NavigationStack {
-        SidebarView(mailStore: MailStore(), accountManager: AccountManager())
+        SidebarView(mailStore: IntegratedMailStore(accountManager: AccountManager()), accountManager: AccountManager())
     }
 }

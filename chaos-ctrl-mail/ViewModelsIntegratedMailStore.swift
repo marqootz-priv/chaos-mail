@@ -31,6 +31,9 @@ class IntegratedMailStore {
     
     func connectToAccount(_ account: MailAccount) async throws {
         guard let password = account.password else {
+            print("ERROR: Password not found in Keychain for account \(account.id.uuidString)")
+            print("Account email: \(account.emailAddress), authType: \(account.authType)")
+            print("This account may need to be re-added, or the password wasn't saved during setup.")
             throw EmailServiceError.invalidCredentials
         }
         
@@ -39,6 +42,11 @@ class IntegratedMailStore {
     }
     
     func connectWithOAuth2(_ account: MailAccount) async throws {
+        // Check if this is an Apple Sign In account (which cannot access IMAP/SMTP)
+        if account.imapServer == "apple-signin" || account.emailAddress.contains("@privaterelay.appleid.com") {
+            throw EmailServiceError.serverError("Apple Sign In accounts cannot access email via IMAP/SMTP. Please add your iCloud account manually using an app-specific password.")
+        }
+        
         // Check if we have a valid token
         if let token = account.oauthToken, !token.isExpired {
             // Use existing token
@@ -73,14 +81,27 @@ class IntegratedMailStore {
     // MARK: - Sync
     
     func syncCurrentFolder() async throws {
+        print("IntegratedMailStore: Starting sync for folder: \(selectedFolder.rawValue)")
+        print("IntegratedMailStore: emailService.isConnected = \(emailService.isConnected)")
+        
+        guard emailService.isConnected else {
+            print("IntegratedMailStore: Cannot sync - not connected")
+            throw EmailServiceError.notConnected
+        }
+        
         isSyncing = true
-        defer { isSyncing = false }
+        defer { 
+            isSyncing = false
+            print("IntegratedMailStore: Sync completed. Emails count: \(emails.count)")
+        }
         
         do {
             let fetchedEmails = try await emailService.fetchEmails(folder: selectedFolder)
+            print("IntegratedMailStore: Fetched \(fetchedEmails.count) emails")
             emails = fetchedEmails
             lastError = nil
         } catch {
+            print("IntegratedMailStore: Sync error: \(error)")
             lastError = error
             throw error
         }

@@ -8,9 +8,15 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var mailStore = MailStore()
     @State private var accountManager = AccountManager()
+    @State private var mailStore: IntegratedMailStore
     @State private var showingQuickSetup = false
+    
+    init() {
+        let accountManager = AccountManager()
+        _accountManager = State(initialValue: accountManager)
+        _mailStore = State(initialValue: IntegratedMailStore(accountManager: accountManager))
+    }
     
     var body: some View {
         NavigationStack {
@@ -19,10 +25,52 @@ struct ContentView: View {
                 WelcomeView(accountManager: accountManager, showingQuickSetup: $showingQuickSetup)
             } else {
                 SidebarView(mailStore: mailStore, accountManager: accountManager)
+                    .onAppear {
+                        Task {
+                            await connectToSelectedAccount()
+                        }
+                    }
+                    .onChange(of: accountManager.selectedAccount?.id) {
+                        Task {
+                            await connectToSelectedAccount()
+                        }
+                    }
             }
         }
         .sheet(isPresented: $showingQuickSetup) {
             QuickAccountSetupView(accountManager: accountManager)
+        }
+    }
+    
+    private func connectToSelectedAccount() async {
+        guard let account = accountManager.selectedAccount else {
+            print("No account selected")
+            return
+        }
+        
+        print("Attempting to connect to account: \(account.emailAddress), authType: \(account.authType)")
+        
+        do {
+            if account.authType == .oauth2 {
+                print("Using OAuth2 connection")
+                try await mailStore.connectWithOAuth2(account)
+            } else {
+                print("Using password connection")
+                // Check if password exists
+                if account.password == nil {
+                    print("ERROR: Password is nil for account \(account.id)")
+                    print("Account details: email=\(account.emailAddress), id=\(account.id.uuidString)")
+                } else {
+                    print("Password found, attempting connection")
+                }
+                try await mailStore.connectToAccount(account)
+            }
+            print("Successfully connected to account")
+        } catch {
+            print("Failed to connect to account: \(error)")
+            if let emailError = error as? EmailServiceError {
+                print("EmailServiceError: \(emailError.localizedDescription)")
+            }
         }
     }
 }

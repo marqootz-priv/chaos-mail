@@ -9,78 +9,127 @@ import SwiftUI
 
 struct EmailDetailView: View {
     let email: Email
-    @Bindable var mailStore: MailStore
+    @Bindable var mailStore: IntegratedMailStore
+    @State private var htmlHeight: CGFloat = UIScreen.main.bounds.height * 0.9
+    
+    
+    private func isHTML(_ content: String) -> Bool {
+        let htmlTags = ["<html", "<!DOCTYPE", "<body", "<div", "<p", "<br", "<span", "<a href", "<img", "<table", "<h1", "<h2", "<h3", "<ul", "<ol", "<li"]
+        let lowerContent = content.lowercased()
+        return htmlTags.contains { lowerContent.contains($0.lowercased()) }
+    }
+    
+    @State private var isToExpanded = false
     
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Header
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text(email.subject)
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                        
-                        Spacer()
-                        
-                        Button {
-                            mailStore.toggleStarred(email: email)
-                        } label: {
-                            Image(systemName: email.isStarred ? "star.fill" : "star")
-                                .foregroundStyle(email.isStarred ? .yellow : .secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
+            VStack(alignment: .leading, spacing: 0) {
+                // Header - full width, no padding on sides
+                VStack(alignment: .leading, spacing: 16) {
+                    // Subject
+                    Text(email.subject)
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .padding(.horizontal)
+                        .padding(.top)
                     
-                    Divider()
-                    
-                    HStack(alignment: .top) {
+                    HStack(alignment: .top, spacing: 12) {
                         // Avatar
-                        Circle()
-                            .fill(.blue.gradient)
-                            .frame(width: 40, height: 40)
-                            .overlay {
-                                Text(String(email.from.prefix(1).uppercased()))
-                                    .foregroundStyle(.white)
-                                    .fontWeight(.semibold)
-                            }
+                        CompanyAvatarView(email: email.from, size: 50)
+                            .padding(.leading)
                         
                         VStack(alignment: .leading, spacing: 4) {
+                            // Sender name
                             Text(email.from)
                                 .fontWeight(.semibold)
+                                .font(.body)
                             
-                            HStack(spacing: 4) {
-                                Text("to")
-                                    .foregroundStyle(.secondary)
-                                Text(email.to.joined(separator: ", "))
+                            // To field - collapsible
+                            if isToExpanded {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 4) {
+                                        Text("to")
+                                            .foregroundStyle(.secondary)
+                                        Button {
+                                            isToExpanded = false
+                                        } label: {
+                                            Image(systemName: "chevron.down")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .font(.caption)
+                                    
+                                    Text(email.to.joined(separator: ", "))
+                                        .foregroundStyle(.secondary)
+                                        .font(.caption)
+                                }
+                            } else {
+                                Button {
+                                    isToExpanded = true
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text("to")
+                                            .foregroundStyle(.secondary)
+                                        if !email.to.isEmpty {
+                                            Text(email.to[0])
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .font(.caption)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .font(.caption)
                         }
                         
                         Spacer()
                         
-                        Text(email.date, style: .date)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        
+                        // Timestamp
                         Text(email.date, style: .time)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .padding(.trailing)
+                    }
+                    .padding(.vertical, 8)
+                }
+                
+                Divider()
+                    .padding(.vertical, 8)
+                
+                // Body - full width, expands to at least screen height, scrolls if longer
+                Group {
+                    if isHTML(email.body) {
+                        HTMLView(htmlContent: email.body) { height in
+                            htmlHeight = max(height, UIScreen.main.bounds.height * 0.9)
+                        }
+                        .frame(
+                            maxWidth: .infinity,
+                            minHeight: htmlHeight,
+                            maxHeight: htmlHeight,
+                            alignment: .topLeading
+                        )
+                    } else {
+                        Text(email.body)
+                            .textSelection(.enabled)
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: UIScreen.main.bounds.height * 0.9,
+                                alignment: .topLeading
+                            )
+                            .padding(.horizontal)
                     }
                 }
-                .padding()
-                .background(.quaternary.opacity(0.5))
-                .cornerRadius(8)
-                
-                // Body
-                Text(email.body)
-                    .textSelection(.enabled)
-                    .padding()
+                .padding(.bottom)
                 
                 if email.hasAttachments {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Attachments")
                             .font(.headline)
+                            .padding(.horizontal)
+                            .padding(.top)
                         
                         HStack {
                             Image(systemName: "doc.fill")
@@ -98,13 +147,11 @@ struct EmailDetailView: View {
                         .padding()
                         .background(.quaternary.opacity(0.5))
                         .cornerRadius(8)
+                        .padding(.horizontal)
                     }
-                    .padding()
+                    .padding(.bottom)
                 }
-                
-                Spacer()
             }
-            .padding()
         }
         .navigationTitle("Email")
         .toolbar {
@@ -130,7 +177,9 @@ struct EmailDetailView: View {
                 Divider()
                 
                 Button {
-                    mailStore.toggleRead(email: email)
+                    Task {
+                        try? await mailStore.toggleRead(email: email)
+                    }
                 } label: {
                     Label(
                         email.isRead ? "Mark as Unread" : "Mark as Read",
@@ -141,7 +190,9 @@ struct EmailDetailView: View {
                 Menu {
                     ForEach(MailFolder.allCases.filter { $0 != email.folder }) { folder in
                         Button {
-                            mailStore.moveToFolder(email: email, folder: folder)
+                            Task {
+                                try? await mailStore.moveToFolder(email: email, folder: folder)
+                            }
                         } label: {
                             Label(folder.rawValue, systemImage: folder.icon)
                         }
@@ -151,7 +202,9 @@ struct EmailDetailView: View {
                 }
                 
                 Button(role: .destructive) {
-                    mailStore.deleteEmail(email: email)
+                    Task {
+                        try? await mailStore.deleteEmail(email: email)
+                    }
                 } label: {
                     Label("Delete", systemImage: "trash")
                 }
@@ -159,7 +212,9 @@ struct EmailDetailView: View {
         }
         .onAppear {
             if !email.isRead {
-                mailStore.toggleRead(email: email)
+                Task {
+                    try? await mailStore.toggleRead(email: email)
+                }
             }
         }
     }
@@ -168,6 +223,6 @@ struct EmailDetailView: View {
 #Preview {
     EmailDetailView(
         email: Email.sampleEmails[0],
-        mailStore: MailStore()
+        mailStore: IntegratedMailStore(accountManager: AccountManager())
     )
 }

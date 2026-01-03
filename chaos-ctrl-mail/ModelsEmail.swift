@@ -19,6 +19,33 @@ struct Email: Identifiable, Hashable {
     var folder: MailFolder
     var hasAttachments: Bool
     
+    /// Clean text preview for list view (strips HTML, limits length)
+    var preview: String {
+        var text = body
+        
+        // Strip HTML tags
+        text = text.replacingOccurrences(of: #"<[^>]*>"#, with: " ", options: [.regularExpression, .caseInsensitive])
+        
+        // Decode HTML entities
+        text = text.replacingOccurrences(of: "&amp;", with: "&")
+        text = text.replacingOccurrences(of: "&lt;", with: "<")
+        text = text.replacingOccurrences(of: "&gt;", with: ">")
+        text = text.replacingOccurrences(of: "&quot;", with: "\"")
+        text = text.replacingOccurrences(of: "&#39;", with: "'")
+        text = text.replacingOccurrences(of: "&nbsp;", with: " ")
+        
+        // Replace newlines with spaces and clean up whitespace
+        text = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Limit to 100 characters
+        if text.count > 100 {
+            return String(text.prefix(100)) + "…"
+        }
+        
+        return text.isEmpty ? "(No content)" : text
+    }
+    
     // Implement Hashable based on id only
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
