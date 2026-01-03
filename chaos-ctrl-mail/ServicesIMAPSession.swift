@@ -645,11 +645,13 @@ actor IMAPSession {
             let partHeaders = String(partToParse[..<headerEndRange.lowerBound])
             var partContent = String(partToParse[headerEndRange.upperBound...])
             
-            // CRITICAL: Remove content that extends to the next boundary
-            // Find the start of the next boundary marker (--boundary or --boundary--)
-            if let nextBoundary = partContent.range(of: "\r\n--") ?? partContent.range(of: "\n--") {
-                partContent = String(partContent[..<nextBoundary.lowerBound])
-            }
+            // CRITICAL: For nested multipart, we need to preserve ALL content until the OUTER boundary
+            // For regular parts, we stop at the next boundary marker
+            // But for nested multipart, the content includes nested boundaries, so we need to
+            // find where this part ends by looking for the NEXT part's start (which would be after this part ends)
+            // Actually, partContent should already be correctly extracted by the split - it contains
+            // everything from after the headers until the next separator split
+            // So we don't need to trim at boundaries here - the split already did that
             partContent = partContent.trimmingCharacters(in: .whitespacesAndNewlines)
             
             // Extract headers
@@ -671,13 +673,15 @@ actor IMAPSession {
                 let nestedBoundary = extractHeaderParameter(partHeaders, header: "Content-Type", param: "boundary") ?? ""
                 if !nestedBoundary.isEmpty {
                     print("IMAP: parseMIMEParts - part \(index) is nested multipart with boundary '\(nestedBoundary)', parsing recursively")
+                    print("IMAP: parseMIMEParts - nested partContent length: \(partContent.count), preview: \(String(partContent.prefix(500)))")
                     let (nestedBody, nestedIsHTML, nestedAttachments) = parseMIMEParts(partContent, boundary: nestedBoundary)
-                    if !nestedBody.isEmpty {
-                        if nestedIsHTML {
-                            htmlBody = nestedBody
-                        } else {
-                            plainBody = nestedBody
-                        }
+                    print("IMAP: parseMIMEParts - nested parse returned: body length=\(nestedBody.count), isHTML=\(nestedIsHTML), attachments=\(nestedAttachments.count)")
+                    // For nested multipart, we should merge HTML and plain text, preferring HTML
+                    if nestedIsHTML {
+                        htmlBody = nestedBody
+                    } else if htmlBody.isEmpty {
+                        // Only use plain text if we don't already have HTML
+                        plainBody = nestedBody
                     }
                     attachments.append(contentsOf: nestedAttachments)
                 } else {
