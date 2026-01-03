@@ -622,17 +622,7 @@ actor IMAPSession {
     private func stripThreadingMetadataHTML(_ html: String) -> String {
         var cleaned = html
         
-        // Drop gmail_quote / yahoo_quoted / cite blocks everywhere (not just first)
-        let quotePatterns = [
-            #"(?is)<div[^>]*class=["']gmail_quote["'][^>]*>.*?</div>"#,
-            #"(?is)<blockquote[^>]*type=["']cite["'][^>]*>.*?</blockquote>"#,
-            #"(?is)<div[^>]*id=["']divRplyFwdMsg["'][^>]*>.*?</div>"#,
-            #"(?is)<div[^>]*class=["']yahoo_quoted["'][^>]*>.*?</div>"#
-        ]
-        for pattern in quotePatterns {
-            cleaned = cleaned.replacingOccurrences(of: pattern, with: "", options: [.regularExpression])
-        }
-        
+        // Keep HTML content intact to avoid data loss; only remove small attribution/dividers
         // Remove Gmail attribution lines
         cleaned = cleaned.replacingOccurrences(of: #"(?is)<div[^>]*gmail_attr[^>]*>.*?</div>"#, with: "", options: [.regularExpression])
         
@@ -640,12 +630,7 @@ actor IMAPSession {
         cleaned = cleaned.replacingOccurrences(of: #"##- Please type your reply above this line -##"#, with: "", options: .regularExpression)
         cleaned = cleaned.replacingOccurrences(of: #"-----Original Message-----"#, with: "", options: .regularExpression)
         
-        // If still massive, truncate for safety to avoid WKWebView crashes
-        let maxHTMLSize = 120_000
-        if cleaned.count > maxHTMLSize {
-            cleaned = String(cleaned.prefix(maxHTMLSize)) + "<p style='color:#888;'>[Content truncated for performance]</p>"
-        }
-        
+        // Do NOT truncate HTML; preserve full content
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
