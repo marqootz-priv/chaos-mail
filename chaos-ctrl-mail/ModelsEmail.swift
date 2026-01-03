@@ -24,6 +24,19 @@ struct Email: Identifiable, Hashable {
     var preview: String {
         var text = body
         
+        // Remove <style> tags and their content (CSS)
+        text = text.replacingOccurrences(of: #"(?is)<style[^>]*>.*?</style>"#, with: " ", options: .regularExpression)
+        
+        // Remove <script> tags and their content
+        text = text.replacingOccurrences(of: #"(?is)<script[^>]*>.*?</script>"#, with: " ", options: .regularExpression)
+        
+        // Remove inline style attributes from HTML tags (style="...")
+        text = text.replacingOccurrences(of: #"\s+style\s*=\s*"[^"]*""#, with: "", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\s+style\s*=\s*'[^']*'"#, with: "", options: [.regularExpression, .caseInsensitive])
+        
+        // Remove any remaining CSS-like blocks (e.g., { property: value; })
+        text = text.replacingOccurrences(of: #"\{[^}]{0,100}\}"#, with: " ", options: .regularExpression)
+        
         // Strip HTML tags
         text = text.replacingOccurrences(of: #"<[^>]*>"#, with: " ", options: [.regularExpression, .caseInsensitive])
         
