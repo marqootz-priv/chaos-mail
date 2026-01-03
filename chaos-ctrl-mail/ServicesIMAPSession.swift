@@ -533,6 +533,11 @@ actor IMAPSession {
         } else {
             body = stripThreadingMetadata(body)
         }
+
+        // Safety: if quoted-printable artifacts remain, decode once more
+        if body.range(of: #"=[0-9A-F]{2}"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            body = decodeQuotedPrintable(body)
+        }
         
         return (body.trimmingCharacters(in: .whitespacesAndNewlines), attachments)
     }
