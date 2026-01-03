@@ -22,13 +22,24 @@ struct HTMLView: UIViewRepresentable {
         webView.isOpaque = true
         webView.backgroundColor = .white
         webView.scrollView.backgroundColor = .white
+        
+        // Store the coordinator's htmlContent to track changes
+        context.coordinator.lastHTMLContent = htmlContent
+        
+        // Load initial content
+        let html = wrapHTML(htmlContent)
+        webView.loadHTMLString(html, baseURL: nil)
+        
         return webView
     }
     
     func updateUIView(_ webView: WKWebView, context: Context) {
-        // Wrap HTML in a basic HTML structure if needed
-        let html = wrapHTML(htmlContent)
-        webView.loadHTMLString(html, baseURL: nil)
+        // Only reload if the content has actually changed
+        if context.coordinator.lastHTMLContent != htmlContent {
+            context.coordinator.lastHTMLContent = htmlContent
+            let html = wrapHTML(htmlContent)
+            webView.loadHTMLString(html, baseURL: nil)
+        }
     }
     
     func makeCoordinator() -> Coordinator {
@@ -37,6 +48,7 @@ struct HTMLView: UIViewRepresentable {
     
     class Coordinator: NSObject, WKNavigationDelegate {
         private let onHeightChange: ((CGFloat) -> Void)?
+        var lastHTMLContent: String = ""
         
         init(onHeightChange: ((CGFloat) -> Void)?) {
             self.onHeightChange = onHeightChange
