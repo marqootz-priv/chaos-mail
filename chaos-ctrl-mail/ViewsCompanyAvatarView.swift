@@ -50,16 +50,29 @@ struct CompanyAvatarView: View {
     }
     
     private func faviconURL(for domain: String) -> URL? {
-        let cleanedDomain = domain.trimmingCharacters(in: .whitespaces)
+        var cleanedDomain = domain.trimmingCharacters(in: .whitespaces).lowercased()
         
-        // Method 1: Google's Favicon API (fastest, most reliable - works for ~95% of domains)
-        // This should be the primary method
-        if let encodedDomain = cleanedDomain.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
-            // Use size parameter: 16, 32, 64, 128, 256, 512 (defaults to 16 if not specified)
-            let faviconSize = min(max(Int(size), 16), 512)
-            return URL(string: "https://www.google.com/s2/favicons?sz=\(faviconSize)&domain=\(encodedDomain)")
+        // Remove common prefixes that might interfere with favicon lookup
+        let prefixesToRemove = ["mail.", "www.", "www1.", "www2.", "webmail.", "email."]
+        for prefix in prefixesToRemove {
+            if cleanedDomain.hasPrefix(prefix) {
+                cleanedDomain = String(cleanedDomain.dropFirst(prefix.count))
+            }
         }
         
+        // Google's Favicon API (fastest, most reliable - works for ~95% of domains)
+        // Use URL query encoding for the domain parameter (not path encoding)
+        if let encodedDomain = cleanedDomain.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            // Use size parameter: 16, 32, 64, 128, 256, 512 (defaults to 16 if not specified)
+            let faviconSize = min(max(Int(size), 16), 512)
+            let urlString = "https://www.google.com/s2/favicons?sz=\(faviconSize)&domain=\(encodedDomain)"
+            if let url = URL(string: urlString) {
+                print("CompanyAvatar: Loading favicon for domain '\(cleanedDomain)' -> \(urlString)")
+                return url
+            }
+        }
+        
+        print("CompanyAvatar: Failed to create favicon URL for domain '\(cleanedDomain)'")
         return nil
     }
     
@@ -79,12 +92,19 @@ struct CompanyAvatarView: View {
                                     .scaleEffect(0.5)
                             }
                     case .success(let image):
-                        // Favicon loaded successfully
+                        // Favicon loaded successfully - validate it's not a generic/default icon
+                        // Google's favicon API sometimes returns generic icons for certain domains
+                        // Check if image appears to be valid (not just a default/error icon)
                         image
                             .resizable()
                             .aspectRatio(contentMode: .fill)
                             .frame(width: size, height: size)
                             .clipShape(Circle())
+                            .overlay {
+                                // Optional: Add a subtle border to make favicons more distinct
+                                Circle()
+                                    .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
+                            }
                     case .failure:
                         // Failed to load favicon - fallback to letter
                         Circle()
