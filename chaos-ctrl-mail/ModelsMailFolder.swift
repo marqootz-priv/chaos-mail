@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum MailFolder: String, CaseIterable, Identifiable {
+enum MailFolder: String, CaseIterable, Identifiable, Codable {
     case inbox = "Inbox"
     case sent = "Sent"
     case drafts = "Drafts"
