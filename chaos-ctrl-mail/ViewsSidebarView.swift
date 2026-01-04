@@ -18,7 +18,7 @@ struct SidebarView: View {
             if let selectedAccount = accountManager.selectedAccount {
                 Section {
                     NavigationLink {
-                        AccountsListView(accountManager: accountManager)
+                        AccountsListView(accountManager: accountManager, mailStore: mailStore)
                     } label: {
                         HStack {
                             Image(systemName: selectedAccount.provider.icon)

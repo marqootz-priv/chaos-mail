@@ -9,10 +9,12 @@ import SwiftUI
 
 struct AccountsListView: View {
     @Bindable var accountManager: AccountManager
+    var mailStore: IntegratedMailStore?
     @State private var showingAddAccount = false
     @State private var accountToEdit: MailAccount?
     @State private var accountToDelete: MailAccount?
     @State private var showDeleteConfirmation = false
+    @State private var showClearCacheConfirmation = false
     
     var body: some View {
         List {
@@ -53,7 +55,16 @@ struct AccountsListView: View {
         }
         .navigationTitle("Accounts")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                // Dev: Clear cache button (only show if mailStore is available)
+                if mailStore != nil {
+                    Button {
+                        showClearCacheConfirmation = true
+                    } label: {
+                        Label("Clear Cache", systemImage: "trash.circle")
+                    }
+                }
+                
                 Button {
                     showingAddAccount = true
                 } label: {
@@ -77,6 +88,16 @@ struct AccountsListView: View {
             }
         } message: { account in
             Text("Are you sure you want to delete '\(account.name)'? This will remove all account data and credentials.")
+        }
+        .alert("Clear Email Cache", isPresented: $showClearCacheConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Clear", role: .destructive) {
+                Task {
+                    await mailStore?.clearCache()
+                }
+            }
+        } message: {
+            Text("This will clear all cached emails for the current account. Emails will be re-fetched from the server on next sync.")
         }
     }
 }
@@ -132,6 +153,6 @@ struct AccountRowView: View {
 
 #Preview {
     NavigationStack {
-        AccountsListView(accountManager: AccountManager())
+        AccountsListView(accountManager: AccountManager(), mailStore: nil)
     }
 }

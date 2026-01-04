@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct Email: Identifiable, Hashable {
+struct Email: Identifiable, Hashable, Codable {
     let id: UUID
     let from: String
     let to: [String]
@@ -129,13 +129,22 @@ struct Email: Identifiable, Hashable {
     }
 }
 
-struct EmailAttachment: Identifiable, Hashable {
-    let id = UUID()
+struct EmailAttachment: Identifiable, Hashable, Codable {
+    let id: UUID
     let filename: String
     let mimeType: String
     let size: Int
     let data: Data?
     let isInline: Bool
+    
+    init(id: UUID = UUID(), filename: String, mimeType: String, size: Int, data: Data?, isInline: Bool) {
+        self.id = id
+        self.filename = filename
+        self.mimeType = mimeType
+        self.size = size
+        self.data = data
+        self.isInline = isInline
+    }
 }
 
 // MARK: - Sample Data

@@ -27,6 +27,42 @@ class IntegratedMailStore {
         self.accountManager = accountManager
     }
     
+    // MARK: - Cache Management
+    
+    /// Load cached emails for the current account and folder
+    func loadCachedEmails() async {
+        guard let account = accountManager.selectedAccount else { return }
+        let cachedEmails = await EmailPersistenceManager.shared.loadEmails(
+            accountId: account.id,
+            folder: selectedFolder
+        )
+        if !cachedEmails.isEmpty {
+            emails = cachedEmails
+            print("IntegratedMailStore: Loaded \(cachedEmails.count) cached emails for \(selectedFolder.rawValue)")
+        }
+    }
+    
+    /// Save emails to cache
+    private func saveEmailsToCache() async {
+        guard let account = accountManager.selectedAccount else { return }
+        do {
+            try await EmailPersistenceManager.shared.saveEmails(
+                emails,
+                accountId: account.id,
+                folder: selectedFolder
+            )
+        } catch {
+            print("IntegratedMailStore: Failed to save emails to cache: \(error)")
+        }
+    }
+    
+    /// Clear all cached emails for the current account (for dev/testing)
+    func clearCache() async {
+        guard let account = accountManager.selectedAccount else { return }
+        await EmailPersistenceManager.shared.clearCache(for: account.id)
+        print("IntegratedMailStore: Cleared cache for account \(account.emailAddress)")
+    }
+    
     // MARK: - Connection
     
     func connectToAccount(_ account: MailAccount) async throws {
@@ -37,7 +73,12 @@ class IntegratedMailStore {
             throw EmailServiceError.invalidCredentials
         }
         
+        // Load cached emails first for instant display
+        await loadCachedEmails()
+        
         try await emailService.connect(account: account)
+        
+        // Fetch fresh emails in background (will replace cached emails)
         try await syncCurrentFolder()
     }
     
@@ -46,6 +87,9 @@ class IntegratedMailStore {
         if account.imapServer == "apple-signin" || account.emailAddress.contains("@privaterelay.appleid.com") {
             throw EmailServiceError.serverError("Apple Sign In accounts cannot access email via IMAP/SMTP. Please add your iCloud account manually using an app-specific password.")
         }
+        
+        // Load cached emails first for instant display
+        await loadCachedEmails()
         
         // Check if we have a valid token
         if let token = account.oauthToken, !token.isExpired {
@@ -63,6 +107,7 @@ class IntegratedMailStore {
             try await useOAuth2Token(token, for: account)
         }
         
+        // Fetch fresh emails in background (will replace cached emails)
         try await syncCurrentFolder()
     }
     
@@ -100,6 +145,9 @@ class IntegratedMailStore {
             print("IntegratedMailStore: Fetched \(fetchedEmails.count) emails")
             emails = fetchedEmails
             lastError = nil
+            
+            // Save to cache after successful fetch
+            await saveEmailsToCache()
         } catch {
             print("IntegratedMailStore: Sync error: \(error)")
             lastError = error
