@@ -67,8 +67,15 @@ struct HTMLView: UIViewRepresentable {
     }
     
     private func wrapHTML(_ content: String) -> String {
-        // If content already has HTML structure, inject responsive CSS
+        // If content already has HTML structure, extract body content and inject responsive CSS
         if content.contains("<html") || content.contains("<HTML") || content.contains("<!DOCTYPE") {
+            // Extract body content from complete HTML documents to avoid rendering head tags as text
+            let bodyContent = extractBodyContent(from: content)
+            if !bodyContent.isEmpty {
+                // Wrap extracted body content in a fresh HTML structure
+                return wrapBodyContent(bodyContent)
+            }
+            // Fallback: try to inject CSS into existing HTML
             return injectResponsiveCSS(content)
         }
         
@@ -184,6 +191,78 @@ struct HTMLView: UIViewRepresentable {
         }
         
         return modified
+    }
+    
+    private func extractBodyContent(from html: String) -> String {
+        // Extract content between <body> and </body> tags
+        // Handle case-insensitive matching and various body tag formats
+        let bodyStartPattern = #"<body[^>]*>"#
+        let bodyEndPattern = #"</body>"#
+        
+        guard let startRegex = try? NSRegularExpression(pattern: bodyStartPattern, options: [.caseInsensitive, .dotMatchesLineSeparators]),
+              let endRegex = try? NSRegularExpression(pattern: bodyEndPattern, options: [.caseInsensitive]) else {
+            return html // Return original if regex fails
+        }
+        
+        let nsString = html as NSString
+        let range = NSRange(location: 0, length: nsString.length)
+        
+        if let startMatch = startRegex.firstMatch(in: html, options: [], range: range),
+           let endMatch = endRegex.firstMatch(in: html, options: [], range: range) {
+            let bodyStart = startMatch.range.upperBound
+            let bodyEnd = endMatch.range.lowerBound
+            
+            if bodyEnd > bodyStart {
+                let bodyRange = NSRange(location: bodyStart, length: bodyEnd - bodyStart)
+                return nsString.substring(with: bodyRange).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        
+        // If no body tags found, return empty to trigger fallback
+        return ""
+    }
+    
+    private func wrapBodyContent(_ bodyContent: String) -> String {
+        // Wrap body content in a clean HTML structure with responsive CSS
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <style>
+                /* Responsive styles to prevent content overflow */
+                body {
+                    margin: 0;
+                    padding: 16px;
+                    word-wrap: break-word;
+                    background-color: #fff;
+                    max-width: 100% !important;
+                    overflow-x: hidden !important;
+                }
+                img {
+                    max-width: 100% !important;
+                    height: auto !important;
+                }
+                table {
+                    max-width: 100% !important;
+                    width: 100% !important;
+                    table-layout: auto !important;
+                }
+                td, th {
+                    word-wrap: break-word !important;
+                    overflow-wrap: break-word !important;
+                }
+                div, p, span, section, article {
+                    max-width: 100% !important;
+                    box-sizing: border-box !important;
+                }
+            </style>
+        </head>
+        <body>
+            \(bodyContent)
+        </body>
+        </html>
+        """
     }
 }
 
