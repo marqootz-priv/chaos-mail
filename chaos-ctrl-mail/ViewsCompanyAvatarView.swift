@@ -109,9 +109,11 @@ struct CompanyAvatarView: View {
     
     var body: some View {
         Group {
-            if let domain = extractDomain(from: email), let url = faviconURL(for: domain) {
-                // Company email - try to load favicon
-                AsyncImage(url: url) { phase in
+            if let domain = extractDomain(from: email) {
+                print("CompanyAvatar: Extracted domain '\(domain)' from email '\(email)'")
+                if let url = faviconURL(for: domain) {
+                    // Company email - try to load favicon
+                    AsyncImage(url: url) { phase in
                     switch phase {
                     case .empty:
                         // Loading state - show placeholder
@@ -162,6 +164,7 @@ struct CompanyAvatarView: View {
                 }
             } else {
                 // Personal email or no domain - use letter initial
+                print("CompanyAvatar: No domain extracted from email '\(email)', using letter initial")
                 Circle()
                     .fill(avatarColor())
                     .frame(width: size, height: size)
