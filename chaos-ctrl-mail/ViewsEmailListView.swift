@@ -43,11 +43,18 @@ struct EmailListView: View {
                 print("PERF: EmailListView - Rendered list in \(String(format: "%.3f", duration))s")
             }
         }
+        .refreshable {
+            // Pull-to-refresh: force immediate sync
+            print("PERF: EmailListView - Pull-to-refresh triggered")
+            try? await mailStore.syncCurrentFolder(incremental: false, force: true)
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task {
-                        try? await mailStore.syncCurrentFolder()
+                        // Manual refresh: force immediate sync
+                        print("PERF: EmailListView - Manual refresh triggered")
+                        try? await mailStore.syncCurrentFolder(incremental: false, force: true)
                     }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")

@@ -183,6 +183,83 @@ actor IMAPSession {
         return try parseEmail(envelopeResponse: envelopeResponse, bodyResponse: bodyResponse, id: id)
     }
     
+    /// Fetch emails with UID greater than the specified UID (incremental sync)
+    /// Returns emails with their UID for caching
+    func fetchEmailsSince(uid: String, folder: String, limit: Int = 50) async throws -> [(email: Email, uid: String, flags: [String])] {
+        print("IMAP: Fetching emails since UID \(uid) from folder: \(folder)")
+        
+        // SELECT folder
+        try await send("A002 SELECT \(folder)\r\n")
+        let selectResponse = try await receiveUntilComplete()
+        
+        guard selectResponse.contains("A002 OK") else {
+            throw EmailServiceError.serverError("Failed to select folder")
+        }
+        
+        // Use UID SEARCH to get UIDs (not sequence numbers)
+        try await send("A003 UID SEARCH ALL\r\n")
+        let searchResponse = try await receiveUntilComplete()
+        
+        // Parse UIDs from search response (UID SEARCH returns UIDs, not sequence numbers)
+        let uids = parseMessageIds(from: searchResponse)
+        print("IMAP: Found \(uids.count) total UIDs in folder")
+        
+        // Filter to only UIDs greater than our last known UID
+        let lastUID = Int(uid) ?? 0
+        let newUIDs = uids.filter { (Int($0) ?? 0) > lastUID }
+        print("IMAP: Found \(newUIDs.count) new UIDs since \(uid)")
+        
+        // Limit to prevent fetching too many
+        let uidsToFetch = Array(newUIDs.prefix(limit))
+        
+        var results: [(email: Email, uid: String, flags: [String])] = []
+        var commandTag = 4
+        
+        for uidString in uidsToFetch {
+            do {
+                // Fetch using UID (not sequence number)
+                try await send("A\(String(format: "%03d", commandTag)) UID FETCH \(uidString) (FLAGS ENVELOPE)\r\n")
+                let envelopeResponse = try await receiveUntilComplete()
+                
+                try await send("A\(String(format: "%03d", commandTag + 1)) UID FETCH \(uidString) (BODY[])\r\n")
+                let bodyResponse = try await receiveUntilComplete()
+                
+                let email = try parseEmail(envelopeResponse: envelopeResponse, bodyResponse: bodyResponse, id: uidString)
+                
+                // Extract flags from envelope response
+                let flags = extractFlags(from: envelopeResponse)
+                
+                results.append((email: email, uid: uidString, flags: flags))
+                commandTag += 2
+            } catch {
+                print("IMAP: Failed to fetch UID \(uidString): \(error)")
+            }
+        }
+        
+        // Sort by date (most recent first)
+        results.sort { $0.email.date > $1.email.date }
+        
+        print("IMAP: Successfully fetched \(results.count) new emails since UID \(uid)")
+        return results
+    }
+    
+    /// Extract IMAP flags from FETCH response
+    private func extractFlags(from response: String) -> [String] {
+        var flags: [String] = []
+        
+        // Look for FLAGS section: FLAGS (\Seen \Flagged ...)
+        let flagsPattern = #"FLAGS\s*\(([^)]+)\)"#
+        if let regex = try? NSRegularExpression(pattern: flagsPattern, options: []),
+           let match = regex.firstMatch(in: response, options: [], range: NSRange(location: 0, length: response.utf16.count)) {
+            let flagsString = (response as NSString).substring(with: match.range(at: 1))
+            flags = flagsString.components(separatedBy: .whitespaces)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
+        
+        return flags
+    }
+    
     // MARK: - Message Operations
     
     func markAsRead(messageId: String) async throws {

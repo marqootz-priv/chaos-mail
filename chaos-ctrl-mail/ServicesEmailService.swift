@@ -97,6 +97,15 @@ class EmailService {
         return try await session.fetchMessages(from: folderName, limit: limit)
     }
     
+    /// Fetch emails since a specific UID (incremental sync)
+    func fetchEmailsSince(uid: String, folder: String, limit: Int = 50) async throws -> [(email: Email, uid: String, flags: [String])] {
+        guard let session = imapSession, isConnected else {
+            throw EmailServiceError.notConnected
+        }
+        
+        return try await session.fetchEmailsSince(uid: uid, folder: folder, limit: limit)
+    }
+    
     func fetchEmail(id: String) async throws -> Email {
         guard let session = imapSession, isConnected else {
             throw EmailServiceError.notConnected

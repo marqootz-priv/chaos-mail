@@ -65,10 +65,16 @@ struct SidebarView: View {
                         EmailListView(mailStore: mailStore)
                             .onAppear {
                                 mailStore.selectedFolder = folder
-                                // Only sync if connected - connection happens in ContentView
+                                // Load cached emails immediately (no network call)
                                 Task {
+                                    await mailStore.loadCachedEmails()
+                                    
+                                    // Only sync if connected and cache is stale
                                     if mailStore.emailService.isConnected {
-                                        try? await mailStore.syncCurrentFolder()
+                                        let cacheValid = await mailStore.isCacheValid()
+                                        if !cacheValid {
+                                            try? await mailStore.syncCurrentFolder(incremental: true, force: false)
+                                        }
                                     }
                                 }
                             }

@@ -21,33 +21,54 @@ class IntegratedMailStore {
     
     var isSyncing: Bool = false
     var lastError: Error?
+    var lastSyncDate: Date?
+    private var syncTimer: Timer?
     
     init(emailService: EmailService = EmailService(), accountManager: AccountManager) {
         self.emailService = emailService
         self.accountManager = accountManager
     }
     
+    deinit {
+        stopPeriodicSync()
+    }
+    
     // MARK: - Cache Management
     
-    /// Load cached emails for the current account and folder
+    /// Load cached emails for the current account and folder (instant display)
     func loadCachedEmails() async {
         guard let account = accountManager.selectedAccount else { return }
-        let cachedEmails = await EmailPersistenceManager.shared.loadEmails(
+        
+        let startTime = Date()
+        let cachedEmails = await EmailPersistenceManager.shared.loadCachedEmails(
             accountId: account.id,
             folder: selectedFolder
         )
+        let duration = Date().timeIntervalSince(startTime)
+        
         if !cachedEmails.isEmpty {
-            emails = cachedEmails
-            print("IntegratedMailStore: Loaded \(cachedEmails.count) cached emails for \(selectedFolder.rawValue)")
+            emails = cachedEmails.map { $0.toEmail() }
+            print("PERF: loadCachedEmails - Loaded \(cachedEmails.count) cached emails in \(String(format: "%.3f", duration))s")
+        } else {
+            print("PERF: loadCachedEmails - No cached emails found")
         }
     }
     
-    /// Save emails to cache
-    private func saveEmailsToCache() async {
+    /// Check if cache is valid (not stale)
+    func isCacheValid() async -> Bool {
+        guard let account = accountManager.selectedAccount else { return false }
+        return await EmailPersistenceManager.shared.isCacheValid(
+            accountId: account.id,
+            folder: selectedFolder
+        )
+    }
+    
+    /// Save emails to cache with metadata
+    private func saveEmailsToCache(_ cachedEmails: [CachedEmail]) async {
         guard let account = accountManager.selectedAccount else { return }
         do {
-            try await EmailPersistenceManager.shared.saveEmails(
-                emails,
+            try await EmailPersistenceManager.shared.saveCachedEmails(
+                cachedEmails,
                 accountId: account.id,
                 folder: selectedFolder
             )
@@ -56,11 +77,52 @@ class IntegratedMailStore {
         }
     }
     
+    /// Merge new emails with existing cache (incremental sync)
+    private func mergeEmailsToCache(_ newCachedEmails: [CachedEmail]) async {
+        guard let account = accountManager.selectedAccount else { return }
+        do {
+            try await EmailPersistenceManager.shared.mergeCachedEmails(
+                newCachedEmails,
+                accountId: account.id,
+                folder: selectedFolder
+            )
+        } catch {
+            print("IntegratedMailStore: Failed to merge emails to cache: \(error)")
+        }
+    }
+    
     /// Clear all cached emails for the current account (for dev/testing)
     func clearCache() async {
         guard let account = accountManager.selectedAccount else { return }
         await EmailPersistenceManager.shared.clearCache(for: account.id)
         print("IntegratedMailStore: Cleared cache for account \(account.emailAddress)")
+    }
+    
+    // MARK: - Periodic Sync
+    
+    /// Start periodic background sync (every 5 minutes)
+    func startPeriodicSync(interval: TimeInterval = 300) {
+        stopPeriodicSync() // Stop any existing timer
+        
+        syncTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self = self, self.emailService.isConnected else { return }
+                // Only sync if cache is stale
+                if !(await self.isCacheValid()) {
+                    print("PERF: Periodic sync triggered - cache is stale")
+                    try? await self.syncCurrentFolder(incremental: true)
+                } else {
+                    print("PERF: Periodic sync skipped - cache is still valid")
+                }
+            }
+        }
+        print("PERF: Started periodic sync (every \(interval)s)")
+    }
+    
+    /// Stop periodic background sync
+    func stopPeriodicSync() {
+        syncTimer?.invalidate()
+        syncTimer = nil
     }
     
     // MARK: - Connection
@@ -78,8 +140,12 @@ class IntegratedMailStore {
         
         try await emailService.connect(account: account)
         
-        // Fetch fresh emails in background (will replace cached emails)
-        try await syncCurrentFolder()
+        // Sync in background (incremental if cache exists, full if not)
+        let cacheValid = await isCacheValid()
+        try await syncCurrentFolder(incremental: cacheValid, force: false)
+        
+        // Start periodic background sync
+        startPeriodicSync()
     }
     
     func connectWithOAuth2(_ account: MailAccount) async throws {
@@ -107,8 +173,12 @@ class IntegratedMailStore {
             try await useOAuth2Token(token, for: account)
         }
         
-        // Fetch fresh emails in background (will replace cached emails)
-        try await syncCurrentFolder()
+        // Sync in background (incremental if cache exists, full if not)
+        let cacheValid = await isCacheValid()
+        try await syncCurrentFolder(incremental: cacheValid, force: false)
+        
+        // Start periodic background sync
+        startPeriodicSync()
     }
     
     private func useOAuth2Token(_ token: OAuth2Token, for account: MailAccount) async throws {
@@ -120,18 +190,31 @@ class IntegratedMailStore {
     }
     
     func disconnect() async {
+        stopPeriodicSync()
         await emailService.disconnect()
     }
     
     // MARK: - Sync
     
-    func syncCurrentFolder() async throws {
+    /// Sync current folder with smart caching strategy
+    /// - Parameter incremental: If true, only fetch emails since last known UID
+    /// - Parameter force: If true, sync even if cache is valid
+    func syncCurrentFolder(incremental: Bool = false, force: Bool = false) async throws {
         let startTime = Date()
-        print("PERF: syncCurrentFolder - Starting sync for folder: \(selectedFolder.rawValue)")
+        print("PERF: syncCurrentFolder - Starting sync for folder: \(selectedFolder.rawValue), incremental: \(incremental), force: \(force)")
         
         guard emailService.isConnected else {
             print("PERF: syncCurrentFolder - Failed: not connected")
             throw EmailServiceError.notConnected
+        }
+        
+        // Check if cache is valid (unless forced)
+        if !force {
+            let cacheValid = await isCacheValid()
+            if cacheValid {
+                print("PERF: syncCurrentFolder - Cache is valid, skipping sync")
+                return
+            }
         }
         
         isSyncing = true
@@ -142,24 +225,89 @@ class IntegratedMailStore {
         }
         
         do {
+            guard let account = accountManager.selectedAccount else {
+                throw EmailServiceError.notConnected
+            }
+            
             let fetchStartTime = Date()
-            let fetchedEmails = try await emailService.fetchEmails(folder: selectedFolder, limit: 5)
+            var cachedEmails: [CachedEmail] = []
+            
+            if incremental {
+                // Incremental sync: fetch only new emails since last UID
+                let metadata = await EmailPersistenceManager.shared.loadMetadata(
+                    accountId: account.id,
+                    folder: selectedFolder
+                )
+                let lastUID = metadata?.highestUID ?? "0"
+                
+                let results = try await emailService.fetchEmailsSince(
+                    uid: lastUID,
+                    folder: mapFolderToIMAP(selectedFolder),
+                    limit: 50
+                )
+                
+                // Convert to CachedEmail
+                cachedEmails = results.map { result in
+                    CachedEmail(
+                        from: result.email,
+                        imapUID: result.uid,
+                        flags: result.flags
+                    )
+                }
+                
+                // Merge with existing cache
+                await mergeEmailsToCache(cachedEmails)
+                
+                // Reload all cached emails to update UI
+                let allCached = await EmailPersistenceManager.shared.loadCachedEmails(
+                    accountId: account.id,
+                    folder: selectedFolder
+                )
+                emails = allCached.map { $0.toEmail() }
+                
+            } else {
+                // Full sync: fetch all emails (for initial load or pull-to-refresh)
+                let fetchedEmails = try await emailService.fetchEmails(folder: selectedFolder, limit: 50)
+                
+                // Convert to CachedEmail with UIDs (use sequence numbers as UIDs for now)
+                cachedEmails = fetchedEmails.enumerated().map { index, email in
+                    CachedEmail(
+                        from: email,
+                        imapUID: String(index + 1),
+                        flags: email.isRead ? ["\\Seen"] : []
+                    )
+                }
+                
+                // Save to cache
+                await saveEmailsToCache(cachedEmails)
+                
+                // Update UI
+                emails = fetchedEmails
+            }
+            
             let fetchDuration = Date().timeIntervalSince(fetchStartTime)
-            print("PERF: syncCurrentFolder - Fetched \(fetchedEmails.count) emails from server in \(String(format: "%.3f", fetchDuration))s")
+            print("PERF: syncCurrentFolder - Fetched \(cachedEmails.count) emails from server in \(String(format: "%.3f", fetchDuration))s")
             
-            emails = fetchedEmails
             lastError = nil
+            lastSyncDate = Date()
             
-            // Save to cache after successful fetch
-            let cacheStartTime = Date()
-            await saveEmailsToCache()
-            let cacheDuration = Date().timeIntervalSince(cacheStartTime)
-            print("PERF: syncCurrentFolder - Saved to cache in \(String(format: "%.3f", cacheDuration))s")
         } catch {
             let duration = Date().timeIntervalSince(startTime)
             print("PERF: syncCurrentFolder - Failed after \(String(format: "%.3f", duration))s: \(error)")
             lastError = error
             throw error
+        }
+    }
+    
+    /// Map MailFolder to IMAP folder name
+    private func mapFolderToIMAP(_ folder: MailFolder) -> String {
+        switch folder {
+        case .inbox: return "INBOX"
+        case .sent: return "Sent"
+        case .drafts: return "Drafts"
+        case .trash: return "Trash"
+        case .spam: return "Spam"
+        case .archive: return "Archive"
         }
     }
     
