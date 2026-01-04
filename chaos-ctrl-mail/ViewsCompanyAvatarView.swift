@@ -33,87 +33,118 @@ struct CompanyAvatarView: View {
     }
     
     private func extractDomain(from email: String) -> String? {
-        guard email.contains("@") else { return nil }
+        print("CompanyAvatar: extractDomain - input email: '\(email)'")
+        guard email.contains("@") else {
+            print("CompanyAvatar: extractDomain - no @ found, returning nil")
+            return nil
+        }
         if let atIndex = email.firstIndex(of: "@") {
             var domain = String(email[email.index(after: atIndex)...])
+            print("CompanyAvatar: extractDomain - extracted domain before sanitization: '\(domain)'")
+            
             // Sanitize domain: remove common prefixes like "mail.", "www."
             domain = domain.trimmingCharacters(in: .whitespaces)
             if domain.hasPrefix("mail.") {
                 domain = String(domain.dropFirst(5))
+                print("CompanyAvatar: extractDomain - removed 'mail.' prefix, new domain: '\(domain)'")
             }
             if domain.hasPrefix("www.") {
                 domain = String(domain.dropFirst(4))
+                print("CompanyAvatar: extractDomain - removed 'www.' prefix, new domain: '\(domain)'")
             }
+            print("CompanyAvatar: extractDomain - final extracted domain: '\(domain)'")
             return domain
         }
+        print("CompanyAvatar: extractDomain - failed to find @ index, returning nil")
         return nil
     }
     
     private func normalizeToRootDomain(_ domain: String) -> String {
+        print("CompanyAvatar: normalizeToRootDomain - input domain: '\(domain)'")
         var cleaned = domain.trimmingCharacters(in: .whitespaces).lowercased()
+        print("CompanyAvatar: normalizeToRootDomain - after trim/lowercase: '\(cleaned)'")
         
         // Remove common prefixes
         let prefixesToRemove = ["mail.", "www.", "www1.", "www2.", "webmail.", "email."]
         for prefix in prefixesToRemove {
             if cleaned.hasPrefix(prefix) {
                 cleaned = String(cleaned.dropFirst(prefix.count))
+                print("CompanyAvatar: normalizeToRootDomain - removed '\(prefix)' prefix, new domain: '\(cleaned)'")
             }
         }
         
         // Special handling for major email providers
         // Google: All Google subdomains use google.com favicon
         if cleaned.contains("google.com") {
+            print("CompanyAvatar: normalizeToRootDomain - detected Google domain, normalizing to 'google.com'")
             return "google.com"
         }
         
         // Gmail: Use gmail.com (but Google favicon API will handle it)
         if cleaned == "gmail.com" {
+            print("CompanyAvatar: normalizeToRootDomain - detected Gmail domain, returning 'gmail.com'")
             return "gmail.com"
         }
         
         // Apple: iCloud and me.com use apple.com
         if cleaned.contains("icloud.com") || cleaned.contains("me.com") || cleaned.contains("mac.com") {
+            print("CompanyAvatar: normalizeToRootDomain - detected Apple domain, normalizing to 'apple.com'")
             return "apple.com"
         }
         
         // Microsoft: Outlook and Live use microsoft.com
         if cleaned.contains("outlook.com") || cleaned.contains("live.com") || cleaned.contains("hotmail.com") || cleaned.contains("office365.com") {
+            print("CompanyAvatar: normalizeToRootDomain - detected Microsoft domain, normalizing to 'microsoft.com'")
             return "microsoft.com"
         }
         
         // Yahoo: All Yahoo subdomains use yahoo.com
         if cleaned.contains("yahoo.com") || cleaned.contains("yahoo.co.uk") || cleaned.contains("yahoo.co.jp") {
+            print("CompanyAvatar: normalizeToRootDomain - detected Yahoo domain, normalizing to 'yahoo.com'")
             return "yahoo.com"
         }
         
         // For other domains, extract root domain (last two parts)
         // e.g., accounts.example.com -> example.com
         let parts = cleaned.components(separatedBy: ".")
+        print("CompanyAvatar: normalizeToRootDomain - domain parts: \(parts)")
         
         // Single part or two parts: return as-is
         if parts.count <= 2 {
+            print("CompanyAvatar: normalizeToRootDomain - domain has 2 or fewer parts, returning as-is: '\(cleaned)'")
             return cleaned
         }
         
         // Three or more parts: take last two parts (domain.tld)
         // This handles: subdomain.example.com -> example.com
-        return parts.suffix(2).joined(separator: ".")
+        let rootDomain = parts.suffix(2).joined(separator: ".")
+        print("CompanyAvatar: normalizeToRootDomain - extracted root domain (last 2 parts): '\(rootDomain)'")
+        return rootDomain
     }
     
     private func faviconURL(for domain: String) -> URL? {
+        print("CompanyAvatar: faviconURL - called with domain: '\(domain)', size: \(size)")
         let rootDomain = normalizeToRootDomain(domain)
+        print("CompanyAvatar: faviconURL - normalized root domain: '\(rootDomain)'")
         
         // Google's Favicon API (fastest, most reliable)
         if let encodedDomain = rootDomain.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            print("CompanyAvatar: faviconURL - URL encoded domain: '\(encodedDomain)'")
             let faviconSize = min(max(Int(size), 16), 512)
+            print("CompanyAvatar: faviconURL - calculated favicon size: \(faviconSize)")
             let urlString = "https://www.google.com/s2/favicons?sz=\(faviconSize)&domain=\(encodedDomain)"
+            print("CompanyAvatar: faviconURL - constructed URL string: '\(urlString)'")
             if let url = URL(string: urlString) {
-                print("CompanyAvatar: Favicon for '\(domain)' -> normalized to '\(rootDomain)' -> \(urlString)")
+                print("CompanyAvatar: faviconURL - SUCCESS: Created URL for '\(domain)' -> normalized to '\(rootDomain)' -> \(urlString)")
                 return url
+            } else {
+                print("CompanyAvatar: faviconURL - FAILED: URL(string:) returned nil for '\(urlString)'")
             }
+        } else {
+            print("CompanyAvatar: faviconURL - FAILED: URL encoding failed for domain '\(rootDomain)'")
         }
         
-        print("CompanyAvatar: Failed to create favicon URL for domain '\(rootDomain)'")
+        print("CompanyAvatar: faviconURL - FAILED: Could not create favicon URL for domain '\(rootDomain)'")
         return nil
     }
     
