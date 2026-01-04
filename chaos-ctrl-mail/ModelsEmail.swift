@@ -48,6 +48,39 @@ struct Email: Identifiable, Hashable {
         text = text.replacingOccurrences(of: "&#39;", with: "'")
         text = text.replacingOccurrences(of: "&nbsp;", with: " ")
         
+        // Decode numeric HTML entities (decimal: &#160; or hex: &#xa0;)
+        // Pattern: &#123; or &#x7B; (case insensitive for hex)
+        if let regex = try? NSRegularExpression(pattern: #"&#([0-9]+);|&#x([0-9a-fA-F]+);"#, options: []) {
+            let nsString = text as NSString
+            var decodedText = text
+            var offset = 0
+            
+            // Process matches in reverse to preserve indices
+            let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+            for match in matches.reversed() {
+                var replacement = " "
+                
+                // Check if it's a decimal entity (capture group 1)
+                if match.range(at: 1).location != NSNotFound {
+                    let decimalStr = nsString.substring(with: match.range(at: 1))
+                    if let code = UInt32(decimalStr), let scalar = UnicodeScalar(code) {
+                        replacement = String(Character(scalar))
+                    }
+                }
+                // Check if it's a hex entity (capture group 2)
+                else if match.range(at: 2).location != NSNotFound {
+                    let hexStr = nsString.substring(with: match.range(at: 2))
+                    if let code = UInt32(hexStr, radix: 16), let scalar = UnicodeScalar(code) {
+                        replacement = String(Character(scalar))
+                    }
+                }
+                
+                let range = Range(match.range, in: decodedText)!
+                decodedText.replaceSubrange(range, with: replacement)
+            }
+            text = decodedText
+        }
+        
         // Replace newlines with spaces and clean up whitespace
         text = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
