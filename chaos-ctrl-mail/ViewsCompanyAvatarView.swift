@@ -60,6 +60,37 @@ struct CompanyAvatarView: View {
             }
         }
         
+        // Normalize subdomains to main domain for better favicon lookup
+        // e.g., accounts.google.com -> google.com, mail.yahoo.com -> yahoo.com
+        let domainMappings: [String: String] = [
+            "accounts.google.com": "google.com",
+            "mail.google.com": "google.com",
+            "mail.yahoo.com": "yahoo.com",
+            "mail.yahoo.co.uk": "yahoo.com",
+            "outlook.office365.com": "office365.com",
+            "outlook.live.com": "outlook.com",
+            "mail.live.com": "outlook.com"
+        ]
+        if let mappedDomain = domainMappings[cleanedDomain] {
+            cleanedDomain = mappedDomain
+        } else {
+            // For other domains, try to extract the base domain (last two parts)
+            // e.g., subdomain.example.com -> example.com
+            let parts = cleanedDomain.components(separatedBy: ".")
+            if parts.count > 2 {
+                // Check if it's a known multi-part TLD (like co.uk, com.au)
+                let lastTwo = parts.suffix(2).joined(separator: ".")
+                let knownMultiTLD = ["co.uk", "com.au", "co.nz", "com.br", "co.jp", "com.mx"]
+                if knownMultiTLD.contains(lastTwo) && parts.count > 3 {
+                    // Keep last 3 parts for multi-part TLDs
+                    cleanedDomain = parts.suffix(3).joined(separator: ".")
+                } else {
+                    // Use last 2 parts (domain.tld)
+                    cleanedDomain = parts.suffix(2).joined(separator: ".")
+                }
+            }
+        }
+        
         // Google's Favicon API (fastest, most reliable - works for ~95% of domains)
         // Use URL query encoding for the domain parameter (not path encoding)
         if let encodedDomain = cleanedDomain.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
@@ -67,7 +98,7 @@ struct CompanyAvatarView: View {
             let faviconSize = min(max(Int(size), 16), 512)
             let urlString = "https://www.google.com/s2/favicons?sz=\(faviconSize)&domain=\(encodedDomain)"
             if let url = URL(string: urlString) {
-                print("CompanyAvatar: Loading favicon for domain '\(cleanedDomain)' -> \(urlString)")
+                print("CompanyAvatar: Loading favicon for domain '\(domain)' -> normalized to '\(cleanedDomain)' -> \(urlString)")
                 return url
             }
         }

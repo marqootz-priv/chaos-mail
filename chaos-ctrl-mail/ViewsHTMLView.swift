@@ -169,15 +169,18 @@ struct HTMLView: UIViewRepresentable {
         </style>
         """
         
-        // Insert CSS before </head> if head exists, otherwise before </html> or at end
+        // Insert CSS before </head> if head exists
         if let headCloseRange = modified.range(of: "</head>", options: .caseInsensitive) {
             modified.insert(contentsOf: "\n    \(responsiveCSS)\n    ", at: headCloseRange.lowerBound)
+        } else if let bodyOpenRange = modified.range(of: "<body", options: .caseInsensitive) {
+            // If no </head> but there's a <body>, insert head before body
+            modified.insert(contentsOf: "<head>\n    \(viewportMeta)\n    \(responsiveCSS)\n</head>\n", at: bodyOpenRange.lowerBound)
         } else if let htmlCloseRange = modified.range(of: "</html>", options: .caseInsensitive) {
             // Insert head with CSS before </html>
             modified.insert(contentsOf: "<head>\n    \(viewportMeta)\n    \(responsiveCSS)\n</head>\n", at: htmlCloseRange.lowerBound)
         } else {
-            // No closing tags, append to end (unlikely but handle it)
-            modified = modified + "\n<head>\n    \(viewportMeta)\n    \(responsiveCSS)\n</head>\n"
+            // No closing tags, wrap entire content in proper HTML structure
+            modified = "<!DOCTYPE html>\n<html>\n<head>\n    \(viewportMeta)\n    \(responsiveCSS)\n</head>\n<body>\n\(modified)\n</body>\n</html>"
         }
         
         return modified
