@@ -34,6 +34,15 @@ struct EmailListView: View {
         }
         .navigationTitle(mailStore.selectedFolder.rawValue)
         .searchable(text: $mailStore.searchText, prompt: "Search emails")
+        .onAppear {
+            let startTime = Date()
+            let emailCount = mailStore.filteredEmails.count
+            print("PERF: EmailListView - Started rendering list view for folder: \(mailStore.selectedFolder.rawValue), emails: \(emailCount)")
+            DispatchQueue.main.async {
+                let duration = Date().timeIntervalSince(startTime)
+                print("PERF: EmailListView - Rendered list in \(String(format: "%.3f", duration))s")
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {

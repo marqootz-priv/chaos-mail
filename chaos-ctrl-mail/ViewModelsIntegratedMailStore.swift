@@ -126,30 +126,38 @@ class IntegratedMailStore {
     // MARK: - Sync
     
     func syncCurrentFolder() async throws {
-        print("IntegratedMailStore: Starting sync for folder: \(selectedFolder.rawValue)")
-        print("IntegratedMailStore: emailService.isConnected = \(emailService.isConnected)")
+        let startTime = Date()
+        print("PERF: syncCurrentFolder - Starting sync for folder: \(selectedFolder.rawValue)")
         
         guard emailService.isConnected else {
-            print("IntegratedMailStore: Cannot sync - not connected")
+            print("PERF: syncCurrentFolder - Failed: not connected")
             throw EmailServiceError.notConnected
         }
         
         isSyncing = true
         defer { 
             isSyncing = false
-            print("IntegratedMailStore: Sync completed. Emails count: \(emails.count)")
+            let duration = Date().timeIntervalSince(startTime)
+            print("PERF: syncCurrentFolder - Completed in \(String(format: "%.3f", duration))s, emails count: \(emails.count)")
         }
         
         do {
+            let fetchStartTime = Date()
             let fetchedEmails = try await emailService.fetchEmails(folder: selectedFolder, limit: 5)
-            print("IntegratedMailStore: Fetched \(fetchedEmails.count) emails")
+            let fetchDuration = Date().timeIntervalSince(fetchStartTime)
+            print("PERF: syncCurrentFolder - Fetched \(fetchedEmails.count) emails from server in \(String(format: "%.3f", fetchDuration))s")
+            
             emails = fetchedEmails
             lastError = nil
             
             // Save to cache after successful fetch
+            let cacheStartTime = Date()
             await saveEmailsToCache()
+            let cacheDuration = Date().timeIntervalSince(cacheStartTime)
+            print("PERF: syncCurrentFolder - Saved to cache in \(String(format: "%.3f", cacheDuration))s")
         } catch {
-            print("IntegratedMailStore: Sync error: \(error)")
+            let duration = Date().timeIntervalSince(startTime)
+            print("PERF: syncCurrentFolder - Failed after \(String(format: "%.3f", duration))s: \(error)")
             lastError = error
             throw error
         }

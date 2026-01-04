@@ -161,6 +161,14 @@ struct EmailDetailView: View {
             }
         }
         .navigationTitle("Email")
+        .onAppear {
+            let startTime = Date()
+            print("PERF: EmailDetailView - Started rendering email: '\(email.subject.prefix(50))'")
+            DispatchQueue.main.async {
+                let duration = Date().timeIntervalSince(startTime)
+                print("PERF: EmailDetailView - Rendered in \(String(format: "%.3f", duration))s, body length: \(email.body.count) chars, hasAttachments: \(email.hasAttachments)")
+            }
+        }
         .toolbar {
             ToolbarItemGroup {
                 Button {
