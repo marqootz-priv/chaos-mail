@@ -353,7 +353,14 @@ actor IMAPSession {
             if let dateMatch = envelopeContent.range(of: #""([^"]+)""#, options: .regularExpression) {
                 let dateStr = String(envelopeContent[dateMatch])
                     .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                date = parseIMAPDate(dateStr) ?? Date()
+                print("IMAP: Parsing date string: '\(dateStr)'")
+                if let parsedDate = parseIMAPDate(dateStr) {
+                    date = parsedDate
+                    print("IMAP: Parsed date: \(date) (ISO8601: \(ISO8601DateFormatter().string(from: date)))")
+                } else {
+                    print("IMAP: Failed to parse date, using current date")
+                    date = Date()
+                }
             }
             
             // Extract subject (second quoted string)
@@ -1206,9 +1213,15 @@ actor IMAPSession {
         ]
         
         for format in formatters {
-        let formatter = DateFormatter()
+            let formatter = DateFormatter()
             formatter.dateFormat = format
             formatter.locale = Locale(identifier: "en_US_POSIX")
+            // Set timezone to UTC for consistent parsing (Z format specifier handles offsets)
+            // When format includes Z, the timezone offset in the string is used
+            // When format doesn't include Z, assume UTC
+            if !format.contains("Z") {
+                formatter.timeZone = TimeZone(identifier: "UTC")
+            }
             if let date = formatter.date(from: cleanDate) {
                 return date
             }
