@@ -113,53 +113,65 @@ struct CompanyAvatarView: View {
                 if let url = faviconURL(for: domain) {
                     // Company email - try to load favicon
                     AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .empty:
-                        // Loading state - show placeholder
-                        Circle()
-                            .fill(avatarColor())
-                            .frame(width: size, height: size)
-                            .overlay {
-                                ProgressView()
-                                    .scaleEffect(0.5)
-                            }
-                    case .success(let image):
-                        // Favicon loaded successfully - validate it's not a generic/default icon
-                        // Google's favicon API sometimes returns generic icons for certain domains
-                        // Check if image appears to be valid (not just a default/error icon)
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: size, height: size)
-                            .clipShape(Circle())
-                            .overlay {
-                                // Optional: Add a subtle border to make favicons more distinct
-                                Circle()
-                                    .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
-                            }
-                    case .failure:
-                        // Failed to load favicon - fallback to letter
-                        Circle()
-                            .fill(avatarColor())
-                            .frame(width: size, height: size)
-                            .overlay {
-                                Text(avatarText())
-                                    .foregroundStyle(.white)
-                                    .fontWeight(.semibold)
-                                    .font(.system(size: size * 0.4))
-                            }
-                    @unknown default:
-                        // Fallback
-                        Circle()
-                            .fill(avatarColor())
-                            .frame(width: size, height: size)
-                            .overlay {
-                                Text(avatarText())
-                                    .foregroundStyle(.white)
-                                    .fontWeight(.semibold)
-                                    .font(.system(size: size * 0.4))
-                            }
+                        switch phase {
+                        case .empty:
+                            // Loading state - show placeholder
+                            Circle()
+                                .fill(avatarColor())
+                                .frame(width: size, height: size)
+                                .overlay {
+                                    ProgressView()
+                                        .scaleEffect(0.5)
+                                }
+                        case .success(let image):
+                            // Favicon loaded successfully - validate it's not a generic/default icon
+                            // Google's favicon API sometimes returns generic icons for certain domains
+                            // Check if image appears to be valid (not just a default/error icon)
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: size, height: size)
+                                .clipShape(Circle())
+                                .overlay {
+                                    // Optional: Add a subtle border to make favicons more distinct
+                                    Circle()
+                                        .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
+                                }
+                        case .failure:
+                            // Failed to load favicon - fallback to letter
+                            Circle()
+                                .fill(avatarColor())
+                                .frame(width: size, height: size)
+                                .overlay {
+                                    Text(avatarText())
+                                        .foregroundStyle(.white)
+                                        .fontWeight(.semibold)
+                                        .font(.system(size: size * 0.4))
+                                }
+                        @unknown default:
+                            // Fallback
+                            Circle()
+                                .fill(avatarColor())
+                                .frame(width: size, height: size)
+                                .overlay {
+                                    Text(avatarText())
+                                        .foregroundStyle(.white)
+                                        .fontWeight(.semibold)
+                                        .font(.system(size: size * 0.4))
+                                }
+                        }
                     }
+                } else {
+                    // No URL - use letter initial
+                    Circle()
+                        .fill(avatarColor())
+                        .frame(width: size, height: size)
+                        .overlay {
+                            Text(avatarText())
+                                .foregroundStyle(.white)
+                                .fontWeight(.semibold)
+                                .font(.system(size: size * 0.4))
+                        }
                 }
             } else {
                 // Personal email or no domain - use letter initial
@@ -176,4 +188,3 @@ struct CompanyAvatarView: View {
         }
     }
 }
-
