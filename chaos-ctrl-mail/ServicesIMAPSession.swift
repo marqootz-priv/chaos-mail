@@ -365,6 +365,7 @@ actor IMAPSession {
             
             // Extract subject (second quoted string)
             var subjectStart = envelopeContent.startIndex
+            var afterSubjectIndex = envelopeContent.endIndex
             if let firstQuote = envelopeContent.range(of: #""([^"]+)""#, options: .regularExpression) {
                 subjectStart = firstQuote.upperBound
                 if let secondQuote = envelopeContent[subjectStart...].range(of: #""([^"]+)""#, options: .regularExpression) {
@@ -372,12 +373,19 @@ actor IMAPSession {
                         .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
                     // Decode RFC 2047 encoded subjects (e.g., =?UTF-8?B?...?= or =?UTF-8?Q?...?=)
                     subject = decodeRFC2047(subject)
+                    // Mark position after subject for from address extraction
+                    afterSubjectIndex = secondQuote.upperBound
                 }
             }
             
-            // Extract from address - find first address list after subject
+            // Extract from address - find first address list AFTER subject
             // Pattern: (("Name" NIL "user" "domain.com"))
-            from = extractFirstEmail(from: envelopeContent)
+            // Only search in content after the subject field to avoid matching date/subject
+            let contentAfterSubject = afterSubjectIndex < envelopeContent.endIndex 
+                ? String(envelopeContent[afterSubjectIndex...]) 
+                : envelopeContent
+            from = extractFirstEmail(from: contentAfterSubject)
+            print("IMAP: Extracted 'from' address: '\(from)' (searched after subject field)")
             
             // Extract to addresses - find the "to" field (5th field after date, subject, from, sender, reply-to)
             to = extractToAddresses(from: envelopeContent)
