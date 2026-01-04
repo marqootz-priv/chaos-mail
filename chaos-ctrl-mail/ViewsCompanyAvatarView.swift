@@ -49,61 +49,71 @@ struct CompanyAvatarView: View {
         return nil
     }
     
-    private func faviconURL(for domain: String) -> URL? {
-        var cleanedDomain = domain.trimmingCharacters(in: .whitespaces).lowercased()
+    private func normalizeToRootDomain(_ domain: String) -> String {
+        var cleaned = domain.trimmingCharacters(in: .whitespaces).lowercased()
         
-        // Remove common prefixes that might interfere with favicon lookup
+        // Remove common prefixes
         let prefixesToRemove = ["mail.", "www.", "www1.", "www2.", "webmail.", "email."]
         for prefix in prefixesToRemove {
-            if cleanedDomain.hasPrefix(prefix) {
-                cleanedDomain = String(cleanedDomain.dropFirst(prefix.count))
+            if cleaned.hasPrefix(prefix) {
+                cleaned = String(cleaned.dropFirst(prefix.count))
             }
         }
         
-        // Normalize subdomains to main domain for better favicon lookup
-        // e.g., accounts.google.com -> google.com, mail.yahoo.com -> yahoo.com
-        let domainMappings: [String: String] = [
-            "accounts.google.com": "google.com",
-            "mail.google.com": "google.com",
-            "mail.yahoo.com": "yahoo.com",
-            "mail.yahoo.co.uk": "yahoo.com",
-            "outlook.office365.com": "office365.com",
-            "outlook.live.com": "outlook.com",
-            "mail.live.com": "outlook.com"
-        ]
-        if let mappedDomain = domainMappings[cleanedDomain] {
-            cleanedDomain = mappedDomain
-        } else {
-            // For other domains, try to extract the base domain (last two parts)
-            // e.g., subdomain.example.com -> example.com
-            let parts = cleanedDomain.components(separatedBy: ".")
-            if parts.count > 2 {
-                // Check if it's a known multi-part TLD (like co.uk, com.au)
-                let lastTwo = parts.suffix(2).joined(separator: ".")
-                let knownMultiTLD = ["co.uk", "com.au", "co.nz", "com.br", "co.jp", "com.mx"]
-                if knownMultiTLD.contains(lastTwo) && parts.count > 3 {
-                    // Keep last 3 parts for multi-part TLDs
-                    cleanedDomain = parts.suffix(3).joined(separator: ".")
-                } else {
-                    // Use last 2 parts (domain.tld)
-                    cleanedDomain = parts.suffix(2).joined(separator: ".")
-                }
-            }
+        // Special handling for major email providers
+        // Google: All Google subdomains use google.com favicon
+        if cleaned.contains("google.com") {
+            return "google.com"
         }
         
-        // Google's Favicon API (fastest, most reliable - works for ~95% of domains)
-        // Use URL query encoding for the domain parameter (not path encoding)
-        if let encodedDomain = cleanedDomain.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-            // Use size parameter: 16, 32, 64, 128, 256, 512 (defaults to 16 if not specified)
+        // Gmail: Use gmail.com (but Google favicon API will handle it)
+        if cleaned == "gmail.com" {
+            return "gmail.com"
+        }
+        
+        // Apple: iCloud and me.com use apple.com
+        if cleaned.contains("icloud.com") || cleaned.contains("me.com") || cleaned.contains("mac.com") {
+            return "apple.com"
+        }
+        
+        // Microsoft: Outlook and Live use microsoft.com
+        if cleaned.contains("outlook.com") || cleaned.contains("live.com") || cleaned.contains("hotmail.com") || cleaned.contains("office365.com") {
+            return "microsoft.com"
+        }
+        
+        // Yahoo: All Yahoo subdomains use yahoo.com
+        if cleaned.contains("yahoo.com") || cleaned.contains("yahoo.co.uk") || cleaned.contains("yahoo.co.jp") {
+            return "yahoo.com"
+        }
+        
+        // For other domains, extract root domain (last two parts)
+        // e.g., accounts.example.com -> example.com
+        let parts = cleaned.components(separatedBy: ".")
+        
+        // Single part or two parts: return as-is
+        if parts.count <= 2 {
+            return cleaned
+        }
+        
+        // Three or more parts: take last two parts (domain.tld)
+        // This handles: subdomain.example.com -> example.com
+        return parts.suffix(2).joined(separator: ".")
+    }
+    
+    private func faviconURL(for domain: String) -> URL? {
+        let rootDomain = normalizeToRootDomain(domain)
+        
+        // Google's Favicon API (fastest, most reliable)
+        if let encodedDomain = rootDomain.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
             let faviconSize = min(max(Int(size), 16), 512)
             let urlString = "https://www.google.com/s2/favicons?sz=\(faviconSize)&domain=\(encodedDomain)"
             if let url = URL(string: urlString) {
-                print("CompanyAvatar: Loading favicon for domain '\(domain)' -> normalized to '\(cleanedDomain)' -> \(urlString)")
+                print("CompanyAvatar: Favicon for '\(domain)' -> normalized to '\(rootDomain)' -> \(urlString)")
                 return url
             }
         }
         
-        print("CompanyAvatar: Failed to create favicon URL for domain '\(cleanedDomain)'")
+        print("CompanyAvatar: Failed to create favicon URL for domain '\(rootDomain)'")
         return nil
     }
     
