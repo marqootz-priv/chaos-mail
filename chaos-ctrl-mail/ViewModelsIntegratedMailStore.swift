@@ -37,21 +37,41 @@ class IntegratedMailStore {
     
     /// Load cached emails for the current account and folder (instant display)
     func loadCachedEmails() async {
-        guard let account = accountManager.selectedAccount else { return }
+        print("DEBUG: loadCachedEmails - START")
+        print("DEBUG: loadCachedEmails - selectedFolder=\(selectedFolder.rawValue)")
+        
+        guard let account = accountManager.selectedAccount else {
+            print("DEBUG: loadCachedEmails - ERROR: No selected account")
+            return
+        }
+        
+        print("DEBUG: loadCachedEmails - account.id=\(account.id), account.email=\(account.emailAddress)")
         
         let startTime = Date()
+        print("DEBUG: loadCachedEmails - Calling EmailPersistenceManager.loadCachedEmails")
+        
         let cachedEmails = await EmailPersistenceManager.shared.loadCachedEmails(
             accountId: account.id,
             folder: selectedFolder
         )
-        let duration = Date().timeIntervalSince(startTime)
         
-        if !cachedEmails.isEmpty {
-            emails = cachedEmails.map { $0.toEmail() }
-            print("PERF: loadCachedEmails - Loaded \(cachedEmails.count) cached emails in \(String(format: "%.3f", duration))s")
-        } else {
-            print("PERF: loadCachedEmails - No cached emails found")
+        let duration = Date().timeIntervalSince(startTime)
+        print("DEBUG: loadCachedEmails - Received \(cachedEmails.count) cached emails in \(String(format: "%.3f", duration))s")
+        
+        await MainActor.run {
+            if !cachedEmails.isEmpty {
+                let emailArray = cachedEmails.map { $0.toEmail() }
+                print("DEBUG: loadCachedEmails - Setting emails array, count=\(emailArray.count)")
+                emails = emailArray
+                print("DEBUG: loadCachedEmails - emails array set, current count=\(emails.count)")
+                print("PERF: loadCachedEmails - Loaded \(cachedEmails.count) cached emails in \(String(format: "%.3f", duration))s")
+            } else {
+                print("DEBUG: loadCachedEmails - No cached emails to set, emails array remains at count=\(emails.count)")
+                print("PERF: loadCachedEmails - No cached emails found")
+            }
         }
+        
+        print("DEBUG: loadCachedEmails - END, final emails.count=\(emails.count)")
     }
     
     /// Check if cache is valid (not stale)
@@ -329,17 +349,24 @@ class IntegratedMailStore {
     // MARK: - Filtered Emails
     
     var filteredEmails: [Email] {
-        var filtered = emails.filter { $0.folder == selectedFolder }
+        let folderFiltered = emails.filter { $0.folder == selectedFolder }
+        print("DEBUG: filteredEmails - emails.count=\(emails.count), folderFiltered.count=\(folderFiltered.count), selectedFolder=\(selectedFolder.rawValue)")
+        
+        var filtered = folderFiltered
         
         if !searchText.isEmpty {
+            let beforeSearch = filtered.count
             filtered = filtered.filter { email in
                 email.subject.localizedCaseInsensitiveContains(searchText) ||
                 email.from.localizedCaseInsensitiveContains(searchText) ||
                 email.body.localizedCaseInsensitiveContains(searchText)
             }
+            print("DEBUG: filteredEmails - After search filter: \(beforeSearch) -> \(filtered.count), searchText='\(searchText)'")
         }
         
-        return filtered.sorted { $0.date > $1.date }
+        let sorted = filtered.sorted { $0.date > $1.date }
+        print("DEBUG: filteredEmails - Final count=\(sorted.count)")
+        return sorted
     }
     
     var unreadCount: [MailFolder: Int] {

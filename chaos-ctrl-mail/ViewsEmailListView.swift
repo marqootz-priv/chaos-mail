@@ -12,16 +12,18 @@ struct EmailListView: View {
     
     var body: some View {
         List {
-            if mailStore.isSyncing {
-                ProgressView()
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding()
-            } else if mailStore.filteredEmails.isEmpty {
-                ContentUnavailableView(
-                    "No Emails",
-                    systemImage: "tray",
-                    description: Text("No emails in \(mailStore.selectedFolder.rawValue)")
-                )
+            if mailStore.filteredEmails.isEmpty {
+                if mailStore.isSyncing {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding()
+                } else {
+                    ContentUnavailableView(
+                        "No Emails",
+                        systemImage: "tray",
+                        description: Text("No emails in \(mailStore.selectedFolder.rawValue)")
+                    )
+                }
             } else {
                 ForEach(mailStore.filteredEmails) { email in
                     NavigationLink {
@@ -35,13 +37,12 @@ struct EmailListView: View {
         .navigationTitle(mailStore.selectedFolder.rawValue)
         .searchable(text: $mailStore.searchText, prompt: "Search emails")
         .onAppear {
-            let startTime = Date()
-            let emailCount = mailStore.filteredEmails.count
-            print("PERF: EmailListView - Started rendering list view for folder: \(mailStore.selectedFolder.rawValue), emails: \(emailCount)")
-            DispatchQueue.main.async {
-                let duration = Date().timeIntervalSince(startTime)
-                print("PERF: EmailListView - Rendered list in \(String(format: "%.3f", duration))s")
-            }
+            print("DEBUG: EmailListView.onAppear - View appeared")
+            print("DEBUG: EmailListView.onAppear - isSyncing=\(mailStore.isSyncing)")
+            print("DEBUG: EmailListView.onAppear - emails.count=\(mailStore.emails.count)")
+            print("DEBUG: EmailListView.onAppear - filteredEmails.count=\(mailStore.filteredEmails.count)")
+            print("DEBUG: EmailListView.onAppear - selectedFolder=\(mailStore.selectedFolder.rawValue)")
+            print("DEBUG: EmailListView.onAppear - searchText='\(mailStore.searchText)'")
         }
         .refreshable {
             // Pull-to-refresh: force immediate sync
