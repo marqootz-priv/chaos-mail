@@ -24,6 +24,10 @@ struct CachedEmail: Identifiable, Codable {
     let attachments: [EmailAttachment]
     let hasAttachments: Bool
     
+    // Threading metadata
+    let inReplyTo: String?
+    let references: [String]?
+    
     // IMAP metadata for incremental sync
     let imapUID: String               // IMAP UID (sequence number as string for now)
     let flags: [String]               // IMAP flags (\Seen, \Flagged, etc.)
@@ -42,14 +46,17 @@ struct CachedEmail: Identifiable, Codable {
             isStarred: isStarred,
             folder: mailFolder,
             hasAttachments: hasAttachments,
-            attachments: attachments
+            attachments: attachments,
+            messageId: messageId,
+            inReplyTo: inReplyTo,
+            references: references
         )
     }
     
     /// Create from Email and IMAP metadata
-    init(from email: Email, imapUID: String, flags: [String] = [], messageId: String? = nil) {
+    init(from email: Email, imapUID: String, flags: [String] = [], messageId: String? = nil, inReplyTo: String? = nil, references: [String]? = nil) {
         self.id = email.id.uuidString
-        self.messageId = messageId
+        self.messageId = messageId ?? email.messageId
         self.from = email.from
         self.to = email.to
         self.subject = email.subject
@@ -62,6 +69,8 @@ struct CachedEmail: Identifiable, Codable {
         self.cachedAt = Date()
         self.attachments = email.attachments
         self.hasAttachments = email.hasAttachments
+        self.inReplyTo = inReplyTo ?? email.inReplyTo
+        self.references = references ?? email.references
         self.imapUID = imapUID
         self.flags = flags
     }
@@ -81,4 +90,5 @@ struct CacheMetadata: Codable {
         self.totalEmails = totalEmails
     }
 }
+
 

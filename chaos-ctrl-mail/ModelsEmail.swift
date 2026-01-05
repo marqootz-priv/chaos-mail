@@ -19,6 +19,11 @@ struct Email: Identifiable, Hashable, Codable {
     var folder: MailFolder
     var hasAttachments: Bool
     var attachments: [EmailAttachment]
+
+    // Threading metadata
+    var messageId: String?
+    var inReplyTo: String?
+    var references: [String]?
     
     /// Clean text preview for list view (strips HTML, limits length)
     var preview: String {
@@ -113,7 +118,10 @@ struct Email: Identifiable, Hashable, Codable {
         isStarred: Bool = false,
         folder: MailFolder = .inbox,
         hasAttachments: Bool = false,
-        attachments: [EmailAttachment] = []
+        attachments: [EmailAttachment] = [],
+        messageId: String? = nil,
+        inReplyTo: String? = nil,
+        references: [String]? = nil
     ) {
         self.id = id
         self.from = from
@@ -126,6 +134,9 @@ struct Email: Identifiable, Hashable, Codable {
         self.folder = folder
         self.attachments = attachments
         self.hasAttachments = hasAttachments || !attachments.isEmpty
+        self.messageId = messageId
+        self.inReplyTo = inReplyTo
+        self.references = references
     }
 }
 

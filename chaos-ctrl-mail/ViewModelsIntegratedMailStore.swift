@@ -37,41 +37,23 @@ class IntegratedMailStore {
     
     /// Load cached emails for the current account and folder (instant display)
     func loadCachedEmails() async {
-        print("DEBUG: loadCachedEmails - START")
-        print("DEBUG: loadCachedEmails - selectedFolder=\(selectedFolder.rawValue)")
-        
-        guard let account = accountManager.selectedAccount else {
-            print("DEBUG: loadCachedEmails - ERROR: No selected account")
-            return
-        }
-        
-        print("DEBUG: loadCachedEmails - account.id=\(account.id), account.email=\(account.emailAddress)")
+        guard let account = accountManager.selectedAccount else { return }
         
         let startTime = Date()
-        print("DEBUG: loadCachedEmails - Calling EmailPersistenceManager.loadCachedEmails")
-        
         let cachedEmails = await EmailPersistenceManager.shared.loadCachedEmails(
             accountId: account.id,
             folder: selectedFolder
         )
-        
         let duration = Date().timeIntervalSince(startTime)
-        print("DEBUG: loadCachedEmails - Received \(cachedEmails.count) cached emails in \(String(format: "%.3f", duration))s")
         
         await MainActor.run {
             if !cachedEmails.isEmpty {
-                let emailArray = cachedEmails.map { $0.toEmail() }
-                print("DEBUG: loadCachedEmails - Setting emails array, count=\(emailArray.count)")
-                emails = emailArray
-                print("DEBUG: loadCachedEmails - emails array set, current count=\(emails.count)")
+                emails = cachedEmails.map { $0.toEmail() }
                 print("PERF: loadCachedEmails - Loaded \(cachedEmails.count) cached emails in \(String(format: "%.3f", duration))s")
             } else {
-                print("DEBUG: loadCachedEmails - No cached emails to set, emails array remains at count=\(emails.count)")
                 print("PERF: loadCachedEmails - No cached emails found")
             }
         }
-        
-        print("DEBUG: loadCachedEmails - END, final emails.count=\(emails.count)")
     }
     
     /// Check if cache is valid (not stale)
@@ -349,26 +331,26 @@ class IntegratedMailStore {
     // MARK: - Filtered Emails
     
     var filteredEmails: [Email] {
-        let folderFiltered = emails.filter { $0.folder == selectedFolder }
-        print("DEBUG: filteredEmails - emails.count=\(emails.count), folderFiltered.count=\(folderFiltered.count), selectedFolder=\(selectedFolder.rawValue)")
-        
-        var filtered = folderFiltered
+        var filtered = emails.filter { $0.folder == selectedFolder }
         
         if !searchText.isEmpty {
-            let beforeSearch = filtered.count
             filtered = filtered.filter { email in
                 email.subject.localizedCaseInsensitiveContains(searchText) ||
                 email.from.localizedCaseInsensitiveContains(searchText) ||
                 email.body.localizedCaseInsensitiveContains(searchText)
             }
-            print("DEBUG: filteredEmails - After search filter: \(beforeSearch) -> \(filtered.count), searchText='\(searchText)'")
         }
         
-        let sorted = filtered.sorted { $0.date > $1.date }
-        print("DEBUG: filteredEmails - Final count=\(sorted.count)")
-        return sorted
+        return filtered.sorted { $0.date > $1.date }
     }
     
+    // MARK: - Conversations (threaded)
+    
+    var conversationThreads: [ConversationThread] {
+        ThreadManager().createThreads(from: filteredEmails)
+    }
+    
+
     var unreadCount: [MailFolder: Int] {
         var counts: [MailFolder: Int] = [:]
         for folder in MailFolder.allCases {
@@ -376,77 +358,5 @@ class IntegratedMailStore {
         }
         return counts
     }
-    
-    // MARK: - Email Operations
-    
-    func toggleRead(email: Email) async throws {
-        if email.isRead {
-            try await emailService.markAsUnread(email: email)
-        } else {
-            try await emailService.markAsRead(email: email)
-        }
-        
-        if let index = emails.firstIndex(where: { $0.id == email.id }) {
-            emails[index].isRead.toggle()
-        }
-    }
-    
-    func toggleStarred(email: Email) {
-        // Local only for now - would need IMAP flag support
-        if let index = emails.firstIndex(where: { $0.id == email.id }) {
-            emails[index].isStarred.toggle()
-        }
-    }
-    
-    func moveToFolder(email: Email, folder: MailFolder) async throws {
-        try await emailService.moveEmail(email: email, to: folder)
-        
-        if let index = emails.firstIndex(where: { $0.id == email.id }) {
-            emails[index].folder = folder
-            if selectedEmail?.id == email.id {
-                selectedEmail = nil
-            }
-        }
-    }
-    
-    func deleteEmail(email: Email) async throws {
-        if email.folder == .trash {
-            try await emailService.deleteEmail(email: email, permanently: true)
-            emails.removeAll { $0.id == email.id }
-        } else {
-            try await emailService.deleteEmail(email: email, permanently: false)
-            if let index = emails.firstIndex(where: { $0.id == email.id }) {
-                emails[index].folder = .trash
-            }
-        }
-        
-        if selectedEmail?.id == email.id {
-            selectedEmail = nil
-        }
-    }
-    
-    func sendEmail(to: [String], subject: String, body: String) async throws {
-        guard let account = accountManager.selectedAccount else {
-            throw EmailServiceError.notConnected
-        }
-        
-        try await emailService.sendEmail(
-            to: to,
-            subject: subject,
-            body: body,
-            from: account.emailAddress
-        )
-        
-        // Add to sent folder locally
-        let sentEmail = Email(
-            from: account.emailAddress,
-            to: to,
-            subject: subject,
-            body: body,
-            date: Date(),
-            isRead: true,
-            folder: .sent
-        )
-        emails.append(sentEmail)
-    }
 }
+

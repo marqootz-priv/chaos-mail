@@ -59,66 +59,34 @@ actor EmailPersistenceManager {
     
     /// Load cached emails for a specific account and folder from disk
     func loadCachedEmails(accountId: UUID, folder: MailFolder) async -> [CachedEmail] {
-        print("DEBUG: EmailPersistenceManager.loadCachedEmails - START")
-        print("DEBUG: EmailPersistenceManager.loadCachedEmails - accountId=\(accountId), folder=\(folder.rawValue)")
-        print("DEBUG: EmailPersistenceManager.loadCachedEmails - cacheDirectory=\(cacheDirectory.path)")
-        
         let folderCache = cacheDirectory.appendingPathComponent("\(accountId.uuidString)_\(folder.rawValue)", isDirectory: true)
-        print("DEBUG: EmailPersistenceManager.loadCachedEmails - folderCache.path=\(folderCache.path)")
         
         guard fileManager.fileExists(atPath: folderCache.path) else {
-            print("DEBUG: EmailPersistenceManager.loadCachedEmails - Cache directory does not exist")
             print("EmailPersistence: No cache directory found for \(folder.rawValue)")
             return []
         }
-        
-        print("DEBUG: EmailPersistenceManager.loadCachedEmails - Cache directory exists")
         
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         
         guard let files = try? fileManager.contentsOfDirectory(at: folderCache, includingPropertiesForKeys: nil) else {
-            print("DEBUG: EmailPersistenceManager.loadCachedEmails - ERROR: Failed to list cache directory")
             print("EmailPersistence: Failed to list cache directory")
             return []
         }
         
-        print("DEBUG: EmailPersistenceManager.loadCachedEmails - Found \(files.count) files in cache directory")
-        
         var cachedEmails: [CachedEmail] = []
-        var decodeSuccessCount = 0
-        var decodeFailureCount = 0
-        
         for fileURL in files {
-            guard fileURL.pathExtension == "json" && !fileURL.lastPathComponent.contains("_metadata") else {
-                print("DEBUG: EmailPersistenceManager.loadCachedEmails - Skipping file: \(fileURL.lastPathComponent)")
-                continue
-            }
+            guard fileURL.pathExtension == "json" && !fileURL.lastPathComponent.contains("_metadata") else { continue }
             
-            print("DEBUG: EmailPersistenceManager.loadCachedEmails - Processing file: \(fileURL.lastPathComponent)")
-            
-            if let data = try? Data(contentsOf: fileURL) {
-                print("DEBUG: EmailPersistenceManager.loadCachedEmails - File loaded, size=\(data.count) bytes")
-                if let cachedEmail = try? decoder.decode(CachedEmail.self, from: data) {
-                    cachedEmails.append(cachedEmail)
-                    decodeSuccessCount += 1
-                    print("DEBUG: EmailPersistenceManager.loadCachedEmails - Successfully decoded email: \(cachedEmail.subject.prefix(50))")
-                } else {
-                    decodeFailureCount += 1
-                    print("DEBUG: EmailPersistenceManager.loadCachedEmails - ERROR: Failed to decode email from file: \(fileURL.lastPathComponent)")
-                }
-            } else {
-                decodeFailureCount += 1
-                print("DEBUG: EmailPersistenceManager.loadCachedEmails - ERROR: Failed to read data from file: \(fileURL.lastPathComponent)")
+            if let data = try? Data(contentsOf: fileURL),
+               let cachedEmail = try? decoder.decode(CachedEmail.self, from: data) {
+                cachedEmails.append(cachedEmail)
             }
         }
-        
-        print("DEBUG: EmailPersistenceManager.loadCachedEmails - Decoded \(decodeSuccessCount) emails, failed \(decodeFailureCount)")
         
         // Sort by date (most recent first)
         cachedEmails.sort { $0.date > $1.date }
         
-        print("DEBUG: EmailPersistenceManager.loadCachedEmails - Returning \(cachedEmails.count) cached emails")
         print("EmailPersistence: Loaded \(cachedEmails.count) cached emails from \(folder.rawValue)")
         return cachedEmails
     }

@@ -6,6 +6,12 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
 
 struct EmailDetailView: View {
     let email: Email
@@ -132,23 +138,39 @@ struct EmailDetailView: View {
                             .padding(.top)
                         
                         ForEach(email.attachments) { attachment in
-                            HStack {
-                                Image(systemName: attachmentIcon(for: attachment.mimeType))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(attachment.filename)
-                                        .font(.body)
-                                        .lineLimit(1)
-                                    Text(formatSize(attachment.size))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Image(systemName: attachmentIcon(for: attachment.mimeType))
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(attachment.filename)
+                                            .font(.body)
+                                            .lineLimit(1)
+                                        Text(formatSize(attachment.size))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    HStack(spacing: 12) {
+                                        Button {
+                                            // TODO: Preview attachment (QuickLook / custom preview)
+                                        } label: {
+                                            Label("Preview", systemImage: "eye")
+                                                .labelStyle(.iconOnly)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .disabled(attachment.data == nil)
+                                        
+                                        Button {
+                                            // TODO: Download or share attachment
+                                        } label: {
+                                            Image(systemName: "arrow.down.circle")
+                                        }
+                                        .buttonStyle(.plain)
+                                        .disabled(attachment.data == nil)
+                                    }
                                 }
-                                Spacer()
-                                Button {
-                                    // TODO: Download or share attachment
-                                } label: {
-                                    Image(systemName: "arrow.down.circle")
-                                }
-                                .buttonStyle(.plain)
+
+                                attachmentThumbnail(for: attachment)
                             }
                             .padding()
                             .background(.quaternary.opacity(0.5))
@@ -224,6 +246,33 @@ struct EmailDetailView: View {
                     Label("Delete", systemImage: "trash")
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func attachmentThumbnail(for attachment: EmailAttachment) -> some View {
+        let lower = attachment.mimeType.lowercased()
+        let isImage = lower.contains("image")
+        if isImage, let data = attachment.data {
+            #if canImport(UIKit)
+            if let uiImage = UIImage(data: data) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 120)
+                    .cornerRadius(6)
+            }
+            #elseif canImport(AppKit)
+            if let nsImage = NSImage(data: data) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 120)
+                    .cornerRadius(6)
+            }
+            #else
+            EmptyView()
+            #endif
         }
     }
 

@@ -64,34 +64,18 @@ struct SidebarView: View {
                     NavigationLink {
                         EmailListView(mailStore: mailStore)
                             .onAppear {
-                                print("DEBUG: SidebarView.onAppear - Folder: \(folder.rawValue)")
-                                print("DEBUG: SidebarView.onAppear - Setting selectedFolder to \(folder.rawValue)")
                                 mailStore.selectedFolder = folder
-                                print("DEBUG: SidebarView.onAppear - selectedFolder set, current value=\(mailStore.selectedFolder.rawValue)")
-                                
                                 // Load cached emails immediately (no network call)
                                 Task {
-                                    print("DEBUG: SidebarView.onAppear - Task started, calling loadCachedEmails")
                                     await mailStore.loadCachedEmails()
-                                    print("DEBUG: SidebarView.onAppear - loadCachedEmails completed")
                                     
                                     // Only sync if connected and cache is stale
-                                    print("DEBUG: SidebarView.onAppear - Checking connection: isConnected=\(mailStore.emailService.isConnected)")
                                     if mailStore.emailService.isConnected {
-                                        print("DEBUG: SidebarView.onAppear - Connected, checking cache validity")
                                         let cacheValid = await mailStore.isCacheValid()
-                                        print("DEBUG: SidebarView.onAppear - Cache valid=\(cacheValid)")
                                         if !cacheValid {
-                                            print("DEBUG: SidebarView.onAppear - Cache stale, starting sync")
                                             try? await mailStore.syncCurrentFolder(incremental: true, force: false)
-                                            print("DEBUG: SidebarView.onAppear - Sync completed")
-                                        } else {
-                                            print("DEBUG: SidebarView.onAppear - Cache valid, skipping sync")
                                         }
-                                    } else {
-                                        print("DEBUG: SidebarView.onAppear - Not connected, skipping sync")
                                     }
-                                    print("DEBUG: SidebarView.onAppear - Task completed")
                                 }
                             }
                     } label: {
